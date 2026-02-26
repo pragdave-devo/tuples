@@ -57,14 +57,15 @@ impl TuplesService {
 
     #[cfg(feature = "fdb")]
     async fn new_fdb(db: Arc<foundationdb::Database>) -> Result<Self> {
-        use tuples_storage::{FdbFilterStore, FdbSchemaStore, FdbTupleStore};
+        use tuples_storage::{FdbFilterStore, FdbPlaybookStore, FdbSchemaStore, FdbTupleStore};
         let filters = FdbFilterStore::load(db.clone()).await?;
+        let playbooks = FdbPlaybookStore::load(db.clone()).await?;
         let (trigger_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         Ok(Self {
             schemas: Arc::new(Mutex::new(FdbSchemaStore::new(db.clone()))),
             tuples: Arc::new(Mutex::new(FdbTupleStore::new(db.clone()))),
             filters: Arc::new(Mutex::new(filters)),
-            playbooks: Arc::new(Mutex::new(InMemoryPlaybookStore::default())),
+            playbooks: Arc::new(Mutex::new(playbooks)),
             trigger_tx,
         })
     }

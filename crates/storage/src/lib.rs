@@ -13,4 +13,4 @@ pub use tuple_store::{InMemoryTupleStore, TupleStore};
 #[cfg(feature = "fdb")]
 pub mod fdb_store;
 #[cfg(feature = "fdb")]
-pub use fdb_store::{FdbFilterStore, FdbSchemaStore, FdbTupleStore};
+pub use fdb_store::{FdbFilterStore, FdbPlaybookStore, FdbSchemaStore, FdbTupleStore};

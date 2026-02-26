@@ -1,0 +1,132 @@
+syntax = "proto3";
+
+package tuples;
+
+service Tuples {
+  rpc GetVersion(Empty) returns (VersionResponse);
+
+  rpc RegisterSchema(RegisterSchemaRequest) returns (Empty);
+  rpc GetSchema(GetSchemaRequest) returns (SchemaResponse);
+  rpc ListSchemas(Empty) returns (ListSchemasResponse);
+
+  rpc PutTuple(PutTupleRequest) returns (PutTupleResponse);
+  rpc GetTuple(GetTupleRequest) returns (TupleResponse);
+
+  rpc RegisterFilter(RegisterFilterRequest) returns (Empty);
+  rpc ListFilters(Empty) returns (ListFiltersResponse);
+  rpc MatchTuple(MatchTupleRequest) returns (MatchTupleResponse);
+
+  rpc RegisterPlaybook(RegisterPlaybookRequest) returns (Empty);
+  rpc GetPlaybook(GetPlaybookRequest) returns (PlaybookResponse);
+  rpc ListPlaybooks(Empty) returns (ListPlaybooksResponse);
+  rpc WatchTriggers(WatchTriggersRequest) returns (stream TriggerFiredEvent);
+}
+
+message Empty {}
+
+message VersionResponse {
+  string version = 1;
+}
+
+message RegisterSchemaRequest {
+  string name = 1;
+  /// JSON Schema definition serialized as a JSON string.
+  string definition = 2;
+}
+
+message GetSchemaRequest {
+  string name = 1;
+}
+
+message SchemaResponse {
+  string name = 1;
+  string definition = 2;
+}
+
+message ListSchemasResponse {
+  repeated SchemaResponse schemas = 1;
+}
+
+message PutTupleRequest {
+  string trace_id = 1;
+  /// Schema name; must be registered before putting a tuple.
+  string type = 2;
+  /// User payload as a JSON object string; validated against the named schema.
+  string data = 3;
+}
+
+message PutTupleResponse {
+  /// Server-generated UUID v7.
+  string uuid7 = 1;
+  /// Server-assigned creation timestamp (RFC 3339).
+  string created_at = 2;
+}
+
+message GetTupleRequest {
+  string uuid7 = 1;
+}
+
+message TupleResponse {
+  string uuid7 = 1;
+  string trace_id = 2;
+  string created_at = 3;
+  string type = 4;
+  string data = 5;
+}
+
+message RegisterFilterRequest {
+  /// JSON-serialized Filter definition.
+  string definition = 1;
+}
+
+message FilterResponse {
+  string id = 1;
+  /// JSON-serialized Filter definition.
+  string definition = 2;
+}
+
+message ListFiltersResponse {
+  repeated FilterResponse filters = 1;
+}
+
+message MatchTupleRequest {
+  /// JSON object to match against registered filters.
+  string data = 1;
+}
+
+message MatchTupleResponse {
+  repeated string filter_ids = 1;
+}
+
+message RegisterPlaybookRequest {
+  /// JSON-serialized Playbook definition.
+  string definition = 1;
+}
+
+message GetPlaybookRequest {
+  string name = 1;
+}
+
+message PlaybookResponse {
+  string name = 1;
+  /// JSON-serialized Playbook definition.
+  string definition = 2;
+}
+
+message ListPlaybooksResponse {
+  repeated PlaybookResponse playbooks = 1;
+}
+
+message WatchTriggersRequest {
+  /// Filter to a specific playbook; empty means all playbooks.
+  string playbook = 1;
+}
+
+message TriggerFiredEvent {
+  string playbook    = 1;
+  string agent       = 2;
+  string tuple_uuid7 = 3;
+  string tuple_type  = 4;
+  string tuple_data  = 5;
+  map<string, string> mapped_params = 6;
+}

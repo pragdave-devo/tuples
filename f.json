@@ -1,0 +1,1 @@
+{"id":"high-value-order","exact":{"type":"order"},"wildcards":["customer_id"],"predicates":[{"key":"amount","gt":100}]}

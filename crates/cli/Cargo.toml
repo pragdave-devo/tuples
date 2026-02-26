@@ -1,0 +1,16 @@
+[package]
+name = "cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "tuples"
+path = "src/main.rs"
+
+[dependencies]
+proto = { workspace = true }
+tonic = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }

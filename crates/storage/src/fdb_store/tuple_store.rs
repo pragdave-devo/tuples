@@ -30,6 +30,18 @@ fn by_trace_key(trace_id: &str, uuid7: &str) -> Vec<u8> {
 
 #[async_trait]
 impl TupleStore for FdbTupleStore {
+    async fn put_batch(&mut self, tuples: &[Tuple]) -> Result<()> {
+        let trx = self.db.create_trx()?;
+        for tuple in tuples {
+            let value = serde_json::to_vec(tuple)?;
+            trx.set(&tuple_key(&tuple.uuid7), &value);
+            trx.set(&by_type_key(&tuple.tuple_type, &tuple.uuid7), b"");
+            trx.set(&by_trace_key(&tuple.trace_id, &tuple.uuid7), tuple.tuple_type.as_bytes());
+        }
+        trx.commit().await.map_err(|e| anyhow!("fdb commit: {e}"))?;
+        Ok(())
+    }
+
     async fn put(&mut self, tuple: Tuple) -> Result<()> {
         let primary_key = tuple_key(&tuple.uuid7);
         let by_type = by_type_key(&tuple.tuple_type, &tuple.uuid7);

@@ -1,5 +1,7 @@
 #![deny(warnings)]
 
+mod batch_writer;
+
 use anyhow::Result;
 use chrono::Utc;
 use clap::Parser;
@@ -11,6 +13,7 @@ use proto::tuples::{
     RegisterFilterRequest, RegisterPlaybookRequest, RegisterSchemaRequest, SchemaResponse,
     TriggerFiredEvent, TupleResponse, VersionResponse, WatchTriggersRequest,
 };
+use batch_writer::BatchWriter;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
@@ -41,17 +44,25 @@ struct TuplesService {
     filters: Arc<Mutex<dyn FilterStore>>,
     playbooks: Arc<Mutex<dyn PlaybookStore>>,
     trigger_tx: broadcast::Sender<TriggerFiredEvent>,
+    batch_writer: BatchWriter,
 }
 
 impl TuplesService {
     fn new() -> Self {
+        let tuples: Arc<Mutex<dyn TupleStore>> =
+            Arc::new(Mutex::new(InMemoryTupleStore::default()));
+        let playbooks: Arc<Mutex<dyn PlaybookStore>> =
+            Arc::new(Mutex::new(InMemoryPlaybookStore::default()));
         let (trigger_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
+        let batch_writer =
+            BatchWriter::new(Arc::clone(&tuples), Arc::clone(&playbooks), trigger_tx.clone());
         Self {
             schemas: Arc::new(Mutex::new(InMemorySchemaStore::default())),
-            tuples: Arc::new(Mutex::new(InMemoryTupleStore::default())),
+            tuples,
             filters: Arc::new(Mutex::new(InMemoryFilterStore::default())),
-            playbooks: Arc::new(Mutex::new(InMemoryPlaybookStore::default())),
+            playbooks,
             trigger_tx,
+            batch_writer,
         }
     }
 
@@ -59,14 +70,21 @@ impl TuplesService {
     async fn new_fdb(db: Arc<foundationdb::Database>) -> Result<Self> {
         use tuples_storage::{FdbFilterStore, FdbPlaybookStore, FdbSchemaStore, FdbTupleStore};
         let filters = FdbFilterStore::load(db.clone()).await?;
-        let playbooks = FdbPlaybookStore::load(db.clone()).await?;
+        let fdb_playbooks = FdbPlaybookStore::load(db.clone()).await?;
+        let tuples: Arc<Mutex<dyn TupleStore>> =
+            Arc::new(Mutex::new(FdbTupleStore::new(db.clone())));
+        let playbooks: Arc<Mutex<dyn PlaybookStore>> =
+            Arc::new(Mutex::new(fdb_playbooks));
         let (trigger_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
+        let batch_writer =
+            BatchWriter::new(Arc::clone(&tuples), Arc::clone(&playbooks), trigger_tx.clone());
         Ok(Self {
             schemas: Arc::new(Mutex::new(FdbSchemaStore::new(db.clone()))),
-            tuples: Arc::new(Mutex::new(FdbTupleStore::new(db.clone()))),
+            tuples,
             filters: Arc::new(Mutex::new(filters)),
-            playbooks: Arc::new(Mutex::new(playbooks)),
+            playbooks,
             trigger_tx,
+            batch_writer,
         })
     }
 }
@@ -139,6 +157,7 @@ impl Tuples for TuplesService {
         request: Request<PutTupleRequest>,
     ) -> Result<Response<PutTupleResponse>, Status> {
         let req = request.into_inner();
+        let guaranteed = req.guaranteed_write;
 
         let data: serde_json::Value = serde_json::from_str(&req.data)
             .map_err(|e| Status::invalid_argument(format!("invalid JSON: {e}")))?;
@@ -159,61 +178,11 @@ impl Tuples for TuplesService {
         let uuid7 = Uuid::now_v7().to_string();
         let created_at = Utc::now();
 
-        let tuple = Tuple {
-            uuid7: uuid7.clone(),
-            trace_id: req.trace_id,
-            created_at,
-            tuple_type: req.r#type,
-            data,
-        };
+        let tuple = Tuple { uuid7: uuid7.clone(), trace_id: req.trace_id, created_at, tuple_type: req.r#type, data };
 
-        self.tuples
-            .lock()
-            .await
-            .put(tuple.clone())
-            .await
-            .map_err(|e| Status::internal(e.to_string()))?;
+        self.batch_writer.put(tuple, guaranteed).await?;
 
-        // Fire triggers for any matching playbook triggers.
-        let matchable = tuple.to_matchable();
-        let all_triggers = self
-            .playbooks
-            .lock()
-            .await
-            .all_triggers()
-            .await
-            .map_err(|e| Status::internal(e.to_string()))?;
-
-        for (playbook_name, trigger) in all_triggers {
-            if trigger.filter.matches(&matchable) {
-                let mapped_params: std::collections::HashMap<String, String> = trigger
-                    .mapping
-                    .iter()
-                    .filter_map(|(param, field)| {
-                        matchable
-                            .get(field)
-                            .and_then(|v| v.as_str())
-                            .map(|s| (param.clone(), s.to_string()))
-                    })
-                    .collect();
-
-                let event = TriggerFiredEvent {
-                    playbook: playbook_name,
-                    agent: trigger.agent,
-                    tuple_uuid7: tuple.uuid7.clone(),
-                    tuple_type: tuple.tuple_type.clone(),
-                    tuple_data: tuple.data.to_string(),
-                    mapped_params,
-                };
-                // Ignore SendError — it just means there are no active receivers.
-                let _ = self.trigger_tx.send(event);
-            }
-        }
-
-        Ok(Response::new(PutTupleResponse {
-            uuid7,
-            created_at: created_at.to_rfc3339(),
-        }))
+        Ok(Response::new(PutTupleResponse { uuid7, created_at: created_at.to_rfc3339() }))
     }
 
     async fn get_tuple(
@@ -506,6 +475,7 @@ mod tests {
                 trace_id: "trace-1".to_string(),
                 r#type: "order".to_string(),
                 data: json!({ "id": "order-123" }).to_string(),
+                guaranteed_write: true,
             }))
             .await
             .unwrap()
@@ -532,6 +502,7 @@ mod tests {
                 trace_id: "trace-1".to_string(),
                 r#type: "unknown".to_string(),
                 data: json!({}).to_string(),
+                guaranteed_write: false,
             }))
             .await
             .unwrap_err();
@@ -548,6 +519,7 @@ mod tests {
                 trace_id: "trace-1".to_string(),
                 r#type: "order".to_string(),
                 data: json!({ "id": 42 }).to_string(), // id must be string
+                guaranteed_write: false,
             }))
             .await
             .unwrap_err();
@@ -635,6 +607,7 @@ mod tests {
             trace_id: "trace-1".to_string(),
             r#type: "order".to_string(),
             data: json!({ "id": "order-123" }).to_string(),
+            guaranteed_write: true,
         }))
         .await
         .unwrap();
@@ -671,6 +644,7 @@ mod tests {
             trace_id: "trace-1".to_string(),
             r#type: "payment".to_string(),
             data: json!({ "id": "pay-1" }).to_string(),
+            guaranteed_write: true,
         }))
         .await
         .unwrap();

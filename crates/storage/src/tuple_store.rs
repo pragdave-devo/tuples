@@ -10,6 +10,13 @@ pub trait TupleStore: Send + Sync {
     async fn put(&mut self, tuple: Tuple) -> Result<()>;
     /// Retrieve a tuple by uuid7, or `None` if not found.
     async fn get(&self, uuid7: &str) -> Result<Option<Tuple>>;
+    /// Store multiple tuples atomically. Default implementation calls `put` sequentially.
+    async fn put_batch(&mut self, tuples: &[Tuple]) -> Result<()> {
+        for t in tuples {
+            self.put(t.clone()).await?;
+        }
+        Ok(())
+    }
 }
 
 /// In-memory tuple store (for testing and early stages).

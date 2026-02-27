@@ -25,6 +25,9 @@ struct Args {
     /// Total number of puts in the timed run
     #[arg(long, default_value_t = 1000)]
     run_size: usize,
+    /// Use guaranteed_write=true (block until committed) for every put
+    #[arg(long)]
+    guaranteed: bool,
 }
 
 /// (type_name, data_json)
@@ -111,6 +114,7 @@ async fn timed_run(
     client: &mut TuplesClient<tonic::transport::Channel>,
     pool: &Pool,
     run_size: usize,
+    guaranteed: bool,
 ) -> Result<Vec<Duration>> {
     let mut rng = rand::thread_rng();
     let mut latencies = Vec::with_capacity(run_size);
@@ -124,6 +128,7 @@ async fn timed_run(
                 r#type: type_name.clone(),
                 trace_id: "perf".to_string(),
                 data: data.clone(),
+                guaranteed_write: guaranteed,
             })
             .await?;
         latencies.push(t0.elapsed());
@@ -178,7 +183,7 @@ async fn main() -> Result<()> {
     let (pool, matching_count) = setup(&mut client, &args, &run_id).await?;
 
     let start = Instant::now();
-    let latencies = timed_run(&mut client, &pool, args.run_size).await?;
+    let latencies = timed_run(&mut client, &pool, args.run_size, args.guaranteed).await?;
     let total = start.elapsed();
 
     print_stats(latencies, total, &args, matching_count);

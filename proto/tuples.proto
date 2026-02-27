@@ -53,6 +53,9 @@ message PutTupleRequest {
   string type = 2;
   /// User payload as a JSON object string; validated against the named schema.
   string data = 3;
+  /// If true, block until the tuple is durably committed before returning.
+  /// If false (default), the response may be returned before the write is committed.
+  bool guaranteed_write = 4;
 }
 
 message PutTupleResponse {

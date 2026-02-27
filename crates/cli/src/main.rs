@@ -227,6 +227,7 @@ async fn main() -> Result<()> {
                             r#type: tuple_type,
                             trace_id,
                             data,
+                            guaranteed_write: true,
                         })
                         .await?
                         .into_inner();

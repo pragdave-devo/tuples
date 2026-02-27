@@ -211,6 +211,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "foundationdb",
  "proto",
  "rand 0.8.5",
  "serde_json",

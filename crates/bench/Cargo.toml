@@ -7,11 +7,20 @@ edition.workspace = true
 name = "tuples-bench"
 path = "src/main.rs"
 
+[[bin]]
+name = "fdb-bench"
+path = "src/fdb_bench.rs"
+required-features = ["fdb"]
+
+[features]
+fdb = ["dep:foundationdb"]
+
 [dependencies]
-proto      = { workspace = true }
-tonic      = { workspace = true }
-tokio      = { workspace = true }
-clap       = { workspace = true }
-anyhow     = { workspace = true }
-serde_json = { workspace = true }
-rand       = { workspace = true }
+proto         = { workspace = true }
+tonic         = { workspace = true }
+tokio         = { workspace = true }
+clap          = { workspace = true }
+anyhow        = { workspace = true }
+serde_json    = { workspace = true }
+rand          = { workspace = true }
+foundationdb  = { workspace = true, optional = true }

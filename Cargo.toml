@@ -5,6 +5,7 @@ members = [
     "crates/cli",
     "crates/core",
     "crates/storage",
+    "crates/bench",
 ]
 resolver = "2"
 
@@ -46,6 +47,9 @@ jsonschema = { version = "0.17", default-features = false }
 
 # Regex (for predicate matching)
 regex = "1"
+
+# Random number generation
+rand = "0.8"
 
 # Internal crates
 proto = { path = "crates/proto" }

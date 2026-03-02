@@ -1,0 +1,35 @@
+name: Deploy API docs
+
+on:
+  push:
+    branches: [main]
+    paths: [proto/**, api-docs/_util/**]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+      - run: pip install sabledocs
+      - uses: taiki-e/install-action@just
+      - run: just docs
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: api-docs
+      - id: deploy
+        uses: actions/deploy-pages@v4

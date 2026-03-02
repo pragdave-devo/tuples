@@ -84,29 +84,28 @@ impl PlaybookStore for FdbPlaybookStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use tuples_core::filter::Filter;
-    use tuples_core::playbook::{Agent, Trigger};
+    use tuples_core::playbook::{
+        ParamSource, Trigger, TriggerExecution, TriggerMatch,
+    };
 
     fn example_playbook(name: &str) -> Playbook {
         Playbook {
             name: name.to_string(),
             description: "test".to_string(),
             conductor: "agent1".to_string(),
-            agents: vec![Agent {
-                id: "agent1".to_string(),
-                description: String::new(),
-                schema: "order".to_string(),
-            }],
+            agents: vec!["agent1".to_string()],
             triggers: vec![Trigger {
-                filter: Filter {
-                    id: format!("{name}-t1"),
-                    exact: [("type".to_string(), json!(name))].into(),
-                    wildcards: vec![],
-                    predicates: vec![],
+                id: format!("{name}-t1"),
+                match_: TriggerMatch {
+                    tuple_type: name.to_string(),
+                    filter: Filter::default(),
                 },
-                agent: "agent1".to_string(),
-                mapping: [("order_id".to_string(), "id".to_string())].into(),
+                execution: TriggerExecution {
+                    agent: "agent1".to_string(),
+                    params: [("order_id".to_string(), ParamSource::Field("id".to_string()))]
+                        .into(),
+                },
             }],
         }
     }

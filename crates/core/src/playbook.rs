@@ -1,62 +1,83 @@
 use crate::filter::Filter;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 
-/// An agent definition within a playbook.
+/// Where a trigger parameter value comes from.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Agent {
-    pub id: String,
-    pub description: String,
-    /// Name of the registered Schema for this agent's input.
-    pub schema: String,
+#[serde(rename_all = "snake_case")]
+pub enum ParamSource {
+    /// A hard-coded JSON value passed to the agent unchanged.
+    Literal(Value),
+    /// The value of a named field taken from the triggering tuple.
+    Field(String),
 }
 
-/// A trigger: a filter + which agent to invoke + how to map tuple fields to agent params.
+/// Which tuples should fire a trigger.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TriggerMatch {
+    /// Tuple type that must match; validated at RegisterPlaybook time.
+    pub tuple_type: String,
+    /// Additional filter conditions beyond the type check.
+    #[serde(default)]
+    pub filter: Filter,
+}
+
+/// What to do when a trigger fires.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TriggerExecution {
+    /// Name of the global agent to invoke.
+    pub agent: String,
+    /// Maps each agent parameter name to its source.
+    #[serde(default)]
+    pub params: HashMap<String, ParamSource>,
+}
+
+/// A trigger: a match condition plus an agent execution specification.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Trigger {
-    pub filter: Filter,
-    /// ID of the agent within this playbook to invoke.
-    pub agent: String,
-    /// Maps agent parameter names to tuple field names.
-    pub mapping: HashMap<String, String>,
+    pub id: String,
+    #[serde(rename = "match")]
+    pub match_: TriggerMatch,
+    pub execution: TriggerExecution,
 }
 
-/// A playbook: a named workflow definition with agents and triggers.
+/// A playbook: a named workflow definition referencing global agents.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Playbook {
     pub name: String,
     pub description: String,
-    /// ID of the conductor agent.
+    /// Name of the conductor agent (the workflow entry-point).
     pub conductor: String,
-    pub agents: Vec<Agent>,
+    /// Names of global agents this playbook may use.
+    pub agents: Vec<String>,
     pub triggers: Vec<Trigger>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filter::Filter;
-    use serde_json::json;
 
     fn example_playbook() -> Playbook {
         Playbook {
             name: "fulfil".to_string(),
             description: "Order fulfilment".to_string(),
             conductor: "processor".to_string(),
-            agents: vec![Agent {
-                id: "processor".to_string(),
-                description: "Processes orders".to_string(),
-                schema: "order".to_string(),
-            }],
+            agents: vec!["processor".to_string()],
             triggers: vec![Trigger {
-                filter: Filter {
-                    id: "t1".to_string(),
-                    exact: [("type".to_string(), json!("order"))].into(),
-                    wildcards: vec![],
-                    predicates: vec![],
+                id: "t1".to_string(),
+                match_: TriggerMatch {
+                    tuple_type: "order".to_string(),
+                    filter: Filter::default(),
                 },
-                agent: "processor".to_string(),
-                mapping: [("order_id".to_string(), "id".to_string())].into(),
+                execution: TriggerExecution {
+                    agent: "processor".to_string(),
+                    params: [(
+                        "order_id".to_string(),
+                        ParamSource::Field("id".to_string()),
+                    )]
+                    .into(),
+                },
             }],
         }
     }
@@ -70,10 +91,21 @@ mod tests {
     }
 
     #[test]
-    fn trigger_field_mapping() {
+    fn trigger_param_field_source() {
         let pb = example_playbook();
         let trigger = &pb.triggers[0];
-        assert_eq!(trigger.mapping.get("order_id"), Some(&"id".to_string()));
-        assert_eq!(trigger.agent, "processor");
+        assert_eq!(
+            trigger.execution.params.get("order_id"),
+            Some(&ParamSource::Field("id".to_string()))
+        );
+        assert_eq!(trigger.execution.agent, "processor");
+    }
+
+    #[test]
+    fn param_source_literal_roundtrip() {
+        let source = ParamSource::Literal(serde_json::json!(42));
+        let json = serde_json::to_string(&source).unwrap();
+        let back: ParamSource = serde_json::from_str(&json).unwrap();
+        assert_eq!(source, back);
     }
 }

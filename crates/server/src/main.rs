@@ -1,31 +1,45 @@
 #![deny(warnings)]
 
 mod batch_writer;
+mod executor;
 
 use anyhow::Result;
 use chrono::Utc;
 use clap::Parser;
-use proto::tuples::{
-    tuples_server::{Tuples, TuplesServer},
-    Empty, FilterResponse, GetPlaybookRequest, GetSchemaRequest, GetTupleRequest,
-    ListFiltersResponse, ListPlaybooksResponse, ListSchemasResponse, MatchTupleRequest,
-    MatchTupleResponse, PlaybookResponse, PutTupleRequest, PutTupleResponse,
-    RegisterFilterRequest, RegisterPlaybookRequest, RegisterSchemaRequest, SchemaResponse,
-    TriggerFiredEvent, TupleResponse, VersionResponse, WatchTriggersRequest,
-};
-use batch_writer::BatchWriter;
+use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use tonic::{transport::Server, Request, Response, Status};
-use tuples_core::{filter::Filter, playbook::Playbook, schema::Schema, tuple::Tuple};
-use tuples_storage::{
-    FilterStore, InMemoryFilterStore, InMemoryPlaybookStore, InMemorySchemaStore,
-    InMemoryTupleStore, PlaybookStore, SchemaStore, TupleStore,
-};
 use uuid::Uuid;
+
+use proto::tuples::{
+    tuples_server::{Tuples, TuplesServer},
+    AgentCompletedRequest, AgentLifecycleRequest, AgentResponse, Empty, FilterResponse,
+    GetAgentRequest, GetPlaybookRequest, GetRunRequest, GetSchemaRequest, GetTupleRequest,
+    ListAgentsResponse, ListFiltersResponse, ListPlaybooksResponse, ListRunsResponse,
+    ListSchemasResponse, MatchTupleRequest, MatchTupleResponse, PlaybookResponse, PutTupleRequest,
+    PutTupleResponse, RegisterAgentRequest, RegisterFilterRequest, RegisterPlaybookRequest,
+    RegisterSchemaRequest, RunPlaybookRequest, RunPlaybookResponse, RunResponse, SchemaResponse,
+    TriggerFiredEvent, TupleResponse, VersionResponse, WatchAgentDispatchRequest,
+    WatchRunRequest, WatchTriggersRequest, AgentDispatchedEvent, RunEvent,
+};
+use batch_writer::BatchWriter;
+use executor::Executor;
+use tuples_core::{
+    agent::Agent,
+    filter::Filter,
+    playbook::{ParamSource, Playbook},
+    schema::Schema,
+    tuple::Tuple,
+};
+use tuples_storage::{
+    FilterStore, InMemoryAgentStore, InMemoryFilterStore, InMemoryPlaybookStore,
+    InMemoryRunStore, InMemorySchemaStore, InMemoryTupleStore, PlaybookStore, RunStore,
+    SchemaStore, TupleStore, AgentStore,
+};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const ADDR: &str = "[::1]:50051";
@@ -40,51 +54,109 @@ struct Args {
 
 struct TuplesService {
     schemas: Arc<Mutex<dyn SchemaStore>>,
-    tuples: Arc<Mutex<dyn TupleStore>>,
+    tuples: Arc<dyn TupleStore>,
     filters: Arc<Mutex<dyn FilterStore>>,
     playbooks: Arc<Mutex<dyn PlaybookStore>>,
+    agents: Arc<Mutex<dyn AgentStore>>,
+    runs: Arc<Mutex<dyn RunStore>>,
     trigger_tx: broadcast::Sender<TriggerFiredEvent>,
-    batch_writer: BatchWriter,
+    batch_writer: Arc<BatchWriter>,
+    executor: Arc<Executor>,
 }
 
 impl TuplesService {
     fn new() -> Self {
-        let tuples: Arc<Mutex<dyn TupleStore>> =
-            Arc::new(Mutex::new(InMemoryTupleStore::default()));
+        let tuples: Arc<dyn TupleStore> = Arc::new(InMemoryTupleStore::default());
         let playbooks: Arc<Mutex<dyn PlaybookStore>> =
             Arc::new(Mutex::new(InMemoryPlaybookStore::default()));
+        let agents: Arc<Mutex<dyn AgentStore>> =
+            Arc::new(Mutex::new(InMemoryAgentStore::default()));
+        let runs: Arc<Mutex<dyn RunStore>> = Arc::new(Mutex::new(InMemoryRunStore::default()));
+        let schemas: Arc<Mutex<dyn SchemaStore>> =
+            Arc::new(Mutex::new(InMemorySchemaStore::default()));
+
         let (trigger_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
-        let batch_writer =
-            BatchWriter::new(Arc::clone(&tuples), Arc::clone(&playbooks), trigger_tx.clone());
+        let batch_writer = Arc::new(BatchWriter::new(
+            Arc::clone(&tuples),
+            Arc::clone(&playbooks),
+            trigger_tx.clone(),
+        ));
+
+        let (run_tx, _) = broadcast::channel::<RunEvent>(BROADCAST_CAPACITY);
+        let (dispatch_tx, _) = broadcast::channel::<AgentDispatchedEvent>(BROADCAST_CAPACITY);
+
+        let executor = Arc::new(Executor::new(
+            Arc::clone(&playbooks),
+            Arc::clone(&agents),
+            Arc::clone(&schemas),
+            Arc::clone(&runs),
+            Arc::clone(&batch_writer),
+            trigger_tx.clone(),
+            run_tx,
+            dispatch_tx,
+        ));
+
         Self {
-            schemas: Arc::new(Mutex::new(InMemorySchemaStore::default())),
+            schemas,
             tuples,
             filters: Arc::new(Mutex::new(InMemoryFilterStore::default())),
             playbooks,
+            agents,
+            runs,
             trigger_tx,
             batch_writer,
+            executor,
         }
     }
 
     #[cfg(feature = "fdb")]
     async fn new_fdb(db: Arc<foundationdb::Database>) -> Result<Self> {
-        use tuples_storage::{FdbFilterStore, FdbPlaybookStore, FdbSchemaStore, FdbTupleStore};
+        use tuples_storage::{
+            FdbFilterStore, FdbPlaybookStore, FdbSchemaStore, FdbTupleStore,
+        };
         let filters = FdbFilterStore::load(db.clone()).await?;
         let fdb_playbooks = FdbPlaybookStore::load(db.clone()).await?;
-        let tuples: Arc<Mutex<dyn TupleStore>> =
-            Arc::new(Mutex::new(FdbTupleStore::new(db.clone())));
+        let tuples: Arc<dyn TupleStore> = Arc::new(FdbTupleStore::new(db.clone()));
         let playbooks: Arc<Mutex<dyn PlaybookStore>> =
             Arc::new(Mutex::new(fdb_playbooks));
+        let agents: Arc<Mutex<dyn AgentStore>> =
+            Arc::new(Mutex::new(InMemoryAgentStore::default()));
+        let runs: Arc<Mutex<dyn RunStore>> =
+            Arc::new(Mutex::new(InMemoryRunStore::default()));
+        let schemas: Arc<Mutex<dyn SchemaStore>> =
+            Arc::new(Mutex::new(FdbSchemaStore::new(db.clone())));
+
         let (trigger_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
-        let batch_writer =
-            BatchWriter::new(Arc::clone(&tuples), Arc::clone(&playbooks), trigger_tx.clone());
+        let batch_writer = Arc::new(BatchWriter::new(
+            Arc::clone(&tuples),
+            Arc::clone(&playbooks),
+            trigger_tx.clone(),
+        ));
+
+        let (run_tx, _) = broadcast::channel::<RunEvent>(BROADCAST_CAPACITY);
+        let (dispatch_tx, _) = broadcast::channel::<AgentDispatchedEvent>(BROADCAST_CAPACITY);
+
+        let executor = Arc::new(Executor::new(
+            Arc::clone(&playbooks),
+            Arc::clone(&agents),
+            Arc::clone(&schemas),
+            Arc::clone(&runs),
+            Arc::clone(&batch_writer),
+            trigger_tx.clone(),
+            run_tx,
+            dispatch_tx,
+        ));
+
         Ok(Self {
-            schemas: Arc::new(Mutex::new(FdbSchemaStore::new(db.clone()))),
+            schemas,
             tuples,
             filters: Arc::new(Mutex::new(filters)),
             playbooks,
+            agents,
+            runs,
             trigger_tx,
             batch_writer,
+            executor,
         })
     }
 }
@@ -178,7 +250,13 @@ impl Tuples for TuplesService {
         let uuid7 = Uuid::now_v7().to_string();
         let created_at = Utc::now();
 
-        let tuple = Tuple { uuid7: uuid7.clone(), trace_id: req.trace_id, created_at, tuple_type: req.r#type, data };
+        let tuple = Tuple {
+            uuid7: uuid7.clone(),
+            trace_id: req.trace_id,
+            created_at,
+            tuple_type: req.r#type,
+            data,
+        };
 
         self.batch_writer.put(tuple, guaranteed).await?;
 
@@ -192,8 +270,6 @@ impl Tuples for TuplesService {
         let uuid7 = request.into_inner().uuid7;
         let tuple = self
             .tuples
-            .lock()
-            .await
             .get(&uuid7)
             .await
             .map_err(|e| Status::internal(e.to_string()))?
@@ -266,6 +342,77 @@ impl Tuples for TuplesService {
     ) -> Result<Response<Empty>, Status> {
         let playbook: Playbook = serde_json::from_str(&request.into_inner().definition)
             .map_err(|e| Status::invalid_argument(format!("invalid playbook JSON: {e}")))?;
+
+        // Validate triggers: tuple_type must be registered, field refs must be known.
+        {
+            let schemas = self.schemas.lock().await;
+            for trigger in &playbook.triggers {
+                let schema = schemas
+                    .get(&trigger.match_.tuple_type)
+                    .await
+                    .map_err(|e| Status::internal(e.to_string()))?
+                    .ok_or_else(|| {
+                        Status::invalid_argument(format!(
+                            "trigger '{}': tuple_type '{}' is not a registered schema",
+                            trigger.id, trigger.match_.tuple_type
+                        ))
+                    })?;
+
+                // Collect known fields: schema properties + tuple metadata fields.
+                let mut known: HashSet<String> =
+                    ["uuid7", "trace_id", "created_at", "type"]
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect();
+                if let Some(props) = schema
+                    .definition
+                    .get("properties")
+                    .and_then(|p| p.as_object())
+                {
+                    known.extend(props.keys().cloned());
+                }
+
+                // Validate filter.exact keys.
+                for key in trigger.match_.filter.exact.keys() {
+                    if !known.contains(key) {
+                        return Err(Status::invalid_argument(format!(
+                            "trigger '{}': filter.exact key '{}' is not in schema '{}'",
+                            trigger.id, key, trigger.match_.tuple_type
+                        )));
+                    }
+                }
+                // Validate filter.wildcards.
+                for key in &trigger.match_.filter.wildcards {
+                    if !known.contains(key) {
+                        return Err(Status::invalid_argument(format!(
+                            "trigger '{}': filter.wildcards key '{}' is not in schema '{}'",
+                            trigger.id, key, trigger.match_.tuple_type
+                        )));
+                    }
+                }
+                // Validate filter.predicates.
+                for pred in &trigger.match_.filter.predicates {
+                    if !known.contains(&pred.key) {
+                        return Err(Status::invalid_argument(format!(
+                            "trigger '{}': predicate key '{}' is not in schema '{}'",
+                            trigger.id, pred.key, trigger.match_.tuple_type
+                        )));
+                    }
+                }
+                // Validate Field param sources.
+                for (param, source) in &trigger.execution.params {
+                    if let ParamSource::Field(field) = source {
+                        if !known.contains(field) {
+                            return Err(Status::invalid_argument(format!(
+                                "trigger '{}': param '{}' references unknown field '{}' in schema '{}'",
+                                trigger.id, param, field, trigger.match_.tuple_type
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
         self.playbooks
             .lock()
             .await
@@ -335,6 +482,180 @@ impl Tuples for TuplesService {
         });
         Ok(Response::new(Box::pin(stream)))
     }
+
+    // ── Agent management ────────────────────────────────────────────────────
+
+    async fn register_agent(
+        &self,
+        request: Request<RegisterAgentRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let req = request.into_inner();
+        self.agents
+            .lock()
+            .await
+            .register(Agent { name: req.name, description: req.description, schema: req.schema })
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn get_agent(
+        &self,
+        request: Request<GetAgentRequest>,
+    ) -> Result<Response<AgentResponse>, Status> {
+        let name = request.into_inner().name;
+        let agent = self
+            .agents
+            .lock()
+            .await
+            .get(&name)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?
+            .ok_or_else(|| Status::not_found(format!("agent '{name}' not found")))?;
+        Ok(Response::new(AgentResponse {
+            name: agent.name,
+            description: agent.description,
+            schema: agent.schema,
+        }))
+    }
+
+    async fn list_agents(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<ListAgentsResponse>, Status> {
+        let agents = self
+            .agents
+            .lock()
+            .await
+            .list()
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let agents = agents
+            .into_iter()
+            .map(|a| AgentResponse {
+                name: a.name,
+                description: a.description,
+                schema: a.schema,
+            })
+            .collect();
+        Ok(Response::new(ListAgentsResponse { agents }))
+    }
+
+    // ── Playbook execution ───────────────────────────────────────────────────
+
+    async fn run_playbook(
+        &self,
+        request: Request<RunPlaybookRequest>,
+    ) -> Result<Response<RunPlaybookResponse>, Status> {
+        let req = request.into_inner();
+        let params: serde_json::Value = serde_json::from_str(&req.params)
+            .map_err(|e| Status::invalid_argument(format!("invalid params JSON: {e}")))?;
+        let trace_id = self.executor.run_playbook(&req.playbook_name, params).await?;
+        Ok(Response::new(RunPlaybookResponse { trace_id }))
+    }
+
+    async fn get_run(
+        &self,
+        request: Request<GetRunRequest>,
+    ) -> Result<Response<RunResponse>, Status> {
+        let trace_id = request.into_inner().trace_id;
+        let run = self
+            .runs
+            .lock()
+            .await
+            .get_run(&trace_id)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?
+            .ok_or_else(|| Status::not_found(format!("run '{trace_id}' not found")))?;
+        Ok(Response::new(run_to_proto(run)))
+    }
+
+    async fn list_runs(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<ListRunsResponse>, Status> {
+        let runs = self
+            .runs
+            .lock()
+            .await
+            .list_runs()
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let runs = runs.into_iter().map(run_to_proto).collect();
+        Ok(Response::new(ListRunsResponse { runs }))
+    }
+
+    // ── Agent lifecycle callbacks ────────────────────────────────────────────
+
+    async fn notify_agent_started(
+        &self,
+        request: Request<AgentLifecycleRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let req = request.into_inner();
+        self.executor.notify_agent_started(&req.trace_id, &req.agent_run_id).await?;
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn notify_agent_completed(
+        &self,
+        request: Request<AgentCompletedRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let req = request.into_inner();
+        self.executor
+            .notify_agent_completed(&req.trace_id, &req.agent_run_id, req.success, req.error)
+            .await?;
+        Ok(Response::new(Empty {}))
+    }
+
+    // ── Streaming subscriptions ─────────────────────────────────────────────
+
+    type WatchRunStream =
+        Pin<Box<dyn tokio_stream::Stream<Item = Result<RunEvent, Status>> + Send>>;
+
+    async fn watch_run(
+        &self,
+        request: Request<WatchRunRequest>,
+    ) -> Result<Response<Self::WatchRunStream>, Status> {
+        let trace_id = request.into_inner().trace_id;
+        let rx = self.executor.run_tx.subscribe();
+        let stream = BroadcastStream::new(rx).filter_map(move |result| match result {
+            Ok(event) if event.trace_id == trace_id => Some(Ok(event)),
+            Ok(_) => None,
+            Err(_) => None, // lagged — skip
+        });
+        Ok(Response::new(Box::pin(stream)))
+    }
+
+    type WatchAgentDispatchStream =
+        Pin<Box<dyn tokio_stream::Stream<Item = Result<AgentDispatchedEvent, Status>> + Send>>;
+
+    async fn watch_agent_dispatch(
+        &self,
+        request: Request<WatchAgentDispatchRequest>,
+    ) -> Result<Response<Self::WatchAgentDispatchStream>, Status> {
+        let agent_name = request.into_inner().agent_name;
+        let rx = self.executor.dispatch_tx.subscribe();
+        let stream = BroadcastStream::new(rx).filter_map(move |result| match result {
+            Ok(event) if event.agent_name == agent_name => Some(Ok(event)),
+            Ok(_) => None,
+            Err(_) => None, // lagged — skip
+        });
+        Ok(Response::new(Box::pin(stream)))
+    }
+}
+
+fn run_to_proto(run: tuples_core::run::PlaybookRun) -> RunResponse {
+    let status = match &run.status {
+        tuples_core::run::RunStatus::Running => "Running".to_string(),
+        tuples_core::run::RunStatus::Completed => "Completed".to_string(),
+        tuples_core::run::RunStatus::Failed(e) => format!("Failed: {e}"),
+    };
+    RunResponse {
+        trace_id: run.trace_id,
+        playbook_name: run.playbook_name,
+        started_at: run.started_at.to_rfc3339(),
+        status,
+    }
 }
 
 #[tokio::main]
@@ -398,16 +719,29 @@ mod tests {
         .unwrap();
     }
 
+    async fn register_processor_agent(svc: &TuplesService) {
+        svc.register_agent(Request::new(RegisterAgentRequest {
+            name: "processor".to_string(),
+            description: "Processes orders".to_string(),
+            schema: "order".to_string(),
+        }))
+        .await
+        .unwrap();
+    }
+
     async fn register_fulfil_playbook(svc: &TuplesService) {
         let playbook = json!({
             "name": "fulfil",
             "description": "Order fulfilment",
             "conductor": "processor",
-            "agents": [{"id": "processor", "description": "", "schema": "order"}],
+            "agents": ["processor"],
             "triggers": [{
-                "filter": {"id": "t1", "exact": {"type": "order"}, "wildcards": [], "predicates": []},
-                "agent": "processor",
-                "mapping": {"order_id": "id"}
+                "id": "t1",
+                "match": { "tuple_type": "order" },
+                "execution": {
+                    "agent": "processor",
+                    "params": { "order_id": { "field": "id" } }
+                }
             }]
         });
         svc.register_playbook(Request::new(RegisterPlaybookRequest {
@@ -587,11 +921,64 @@ mod tests {
     #[tokio::test]
     async fn register_and_list_playbook() {
         let svc = service();
+        // Schema must be registered before playbook (trigger validation).
+        register_order_schema(&svc).await;
         register_fulfil_playbook(&svc).await;
 
         let resp = svc.list_playbooks(Request::new(Empty {})).await.unwrap().into_inner();
         assert_eq!(resp.playbooks.len(), 1);
         assert_eq!(resp.playbooks[0].name, "fulfil");
+    }
+
+    #[tokio::test]
+    async fn register_playbook_unknown_schema_rejected() {
+        let svc = service();
+        // No schema registered — trigger validation should fail.
+        let playbook = json!({
+            "name": "fulfil",
+            "description": "test",
+            "conductor": "processor",
+            "agents": ["processor"],
+            "triggers": [{
+                "id": "t1",
+                "match": { "tuple_type": "order" },
+                "execution": { "agent": "processor", "params": {} }
+            }]
+        });
+        let err = svc
+            .register_playbook(Request::new(RegisterPlaybookRequest {
+                definition: playbook.to_string(),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn register_playbook_unknown_field_ref_rejected() {
+        let svc = service();
+        register_order_schema(&svc).await;
+        let playbook = json!({
+            "name": "fulfil",
+            "description": "test",
+            "conductor": "processor",
+            "agents": ["processor"],
+            "triggers": [{
+                "id": "t1",
+                "match": { "tuple_type": "order" },
+                "execution": {
+                    "agent": "processor",
+                    "params": { "x": { "field": "nonexistent_field" } }
+                }
+            }]
+        });
+        let err = svc
+            .register_playbook(Request::new(RegisterPlaybookRequest {
+                definition: playbook.to_string(),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
     }
 
     #[tokio::test]
@@ -616,6 +1003,7 @@ mod tests {
         assert_eq!(event.playbook, "fulfil");
         assert_eq!(event.agent, "processor");
         assert_eq!(event.tuple_type, "order");
+        assert_eq!(event.trace_id, "trace-1");
         assert_eq!(event.mapped_params.get("order_id"), Some(&"order-123".to_string()));
     }
 
@@ -650,5 +1038,174 @@ mod tests {
         .unwrap();
 
         assert!(rx.try_recv().is_err(), "no event should fire for non-matching tuple");
+    }
+
+    // ── Agent management tests ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn register_and_get_agent() {
+        let svc = service();
+        register_order_schema(&svc).await;
+        register_processor_agent(&svc).await;
+        let resp = svc
+            .get_agent(Request::new(GetAgentRequest { name: "processor".to_string() }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(resp.name, "processor");
+        assert_eq!(resp.schema, "order");
+    }
+
+    #[tokio::test]
+    async fn get_agent_not_found() {
+        let svc = service();
+        let err = svc
+            .get_agent(Request::new(GetAgentRequest { name: "missing".to_string() }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn list_agents_empty() {
+        let svc = service();
+        let resp = svc.list_agents(Request::new(Empty {})).await.unwrap().into_inner();
+        assert!(resp.agents.is_empty());
+    }
+
+    // ── Run lifecycle tests ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn run_playbook_returns_trace_id() {
+        let svc = service();
+        register_order_schema(&svc).await;
+        register_processor_agent(&svc).await;
+        register_fulfil_playbook(&svc).await;
+
+        let resp = svc
+            .run_playbook(Request::new(RunPlaybookRequest {
+                playbook_name: "fulfil".to_string(),
+                params: json!({ "id": "order-1" }).to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!resp.trace_id.is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_playbook_not_found() {
+        let svc = service();
+        let err = svc
+            .run_playbook(Request::new(RunPlaybookRequest {
+                playbook_name: "missing".to_string(),
+                params: json!({}).to_string(),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn run_playbook_invalid_params_rejected() {
+        let svc = service();
+        register_order_schema(&svc).await;
+        register_processor_agent(&svc).await;
+        register_fulfil_playbook(&svc).await;
+
+        // id must be a string, not a number.
+        let err = svc
+            .run_playbook(Request::new(RunPlaybookRequest {
+                playbook_name: "fulfil".to_string(),
+                params: json!({ "id": 42 }).to_string(),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn get_run_not_found() {
+        let svc = service();
+        let err = svc
+            .get_run(Request::new(GetRunRequest { trace_id: "missing".to_string() }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn run_playbook_creates_run_record() {
+        let svc = service();
+        register_order_schema(&svc).await;
+        register_processor_agent(&svc).await;
+        register_fulfil_playbook(&svc).await;
+
+        let trace_id = svc
+            .run_playbook(Request::new(RunPlaybookRequest {
+                playbook_name: "fulfil".to_string(),
+                params: json!({ "id": "order-1" }).to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .trace_id;
+
+        let run = svc
+            .get_run(Request::new(GetRunRequest { trace_id: trace_id.clone() }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(run.trace_id, trace_id);
+        assert_eq!(run.playbook_name, "fulfil");
+        assert_eq!(run.status, "Running");
+    }
+
+    #[tokio::test]
+    async fn notify_agent_completed_closes_run() {
+        let svc = service();
+        register_order_schema(&svc).await;
+        register_processor_agent(&svc).await;
+        register_fulfil_playbook(&svc).await;
+
+        // Start a run — this dispatches the conductor.
+        let trace_id = svc
+            .run_playbook(Request::new(RunPlaybookRequest {
+                playbook_name: "fulfil".to_string(),
+                params: json!({ "id": "order-1" }).to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .trace_id;
+
+        // Find the dispatched agent run.
+        let agent_runs = svc
+            .runs
+            .lock()
+            .await
+            .list_agent_runs(&trace_id)
+            .await
+            .unwrap();
+        assert_eq!(agent_runs.len(), 1);
+        let agent_run_id = agent_runs[0].id.clone();
+
+        // Complete the agent.
+        svc.notify_agent_completed(Request::new(AgentCompletedRequest {
+            trace_id: trace_id.clone(),
+            agent_run_id: agent_run_id.clone(),
+            success: true,
+            error: String::new(),
+        }))
+        .await
+        .unwrap();
+
+        // Run should now be Completed.
+        let run = svc
+            .get_run(Request::new(GetRunRequest { trace_id: trace_id.clone() }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(run.status, "Completed");
     }
 }

@@ -69,6 +69,17 @@ pub struct Filter {
     pub predicates: Vec<PredicateCondition>,
 }
 
+impl Default for Filter {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            exact: Default::default(),
+            wildcards: Default::default(),
+            predicates: Default::default(),
+        }
+    }
+}
+
 impl Filter {
     /// Returns true if this filter matches the given JSON object.
     pub fn matches(&self, data: &Value) -> bool {

@@ -20,6 +20,26 @@ service Tuples {
   rpc GetPlaybook(GetPlaybookRequest) returns (PlaybookResponse);
   rpc ListPlaybooks(Empty) returns (ListPlaybooksResponse);
   rpc WatchTriggers(WatchTriggersRequest) returns (stream TriggerFiredEvent);
+
+  // Agent management
+  rpc RegisterAgent(RegisterAgentRequest) returns (Empty);
+  rpc GetAgent(GetAgentRequest) returns (AgentResponse);
+  rpc ListAgents(Empty) returns (ListAgentsResponse);
+
+  // Playbook execution
+  rpc RunPlaybook(RunPlaybookRequest) returns (RunPlaybookResponse);
+  rpc GetRun(GetRunRequest) returns (RunResponse);
+  rpc ListRuns(Empty) returns (ListRunsResponse);
+
+  // Agent lifecycle callbacks (called by agents themselves)
+  rpc NotifyAgentStarted(AgentLifecycleRequest) returns (Empty);
+  rpc NotifyAgentCompleted(AgentCompletedRequest) returns (Empty);
+
+  // Pubsub for UI — stream of run lifecycle events
+  rpc WatchRun(WatchRunRequest) returns (stream RunEvent);
+
+  // Pubsub for agents — subscribe to receive dispatch events
+  rpc WatchAgentDispatch(WatchAgentDispatchRequest) returns (stream AgentDispatchedEvent);
 }
 
 message Empty {}
@@ -132,4 +152,115 @@ message TriggerFiredEvent {
   string tuple_type  = 4;
   string tuple_data  = 5;
   map<string, string> mapped_params = 6;
+  string trace_id    = 7;
+}
+
+// ── Agent management ────────────────────────────────────────────────────────
+
+message RegisterAgentRequest {
+  string name        = 1;
+  string description = 2;
+  /// Name of the registered Schema for this agent's input parameters.
+  string schema      = 3;
+}
+
+message GetAgentRequest {
+  string name = 1;
+}
+
+message AgentResponse {
+  string name        = 1;
+  string description = 2;
+  string schema      = 3;
+}
+
+message ListAgentsResponse {
+  repeated AgentResponse agents = 1;
+}
+
+// ── Playbook execution ───────────────────────────────────────────────────────
+
+message RunPlaybookRequest {
+  string playbook_name = 1;
+  /// JSON object matching the conductor agent's schema.
+  string params        = 2;
+}
+
+message RunPlaybookResponse {
+  string trace_id = 1;
+}
+
+message GetRunRequest {
+  string trace_id = 1;
+}
+
+message RunResponse {
+  string trace_id      = 1;
+  string playbook_name = 2;
+  string started_at    = 3;
+  /// Serialised RunStatus: "Running", "Completed", or "Failed: <reason>".
+  string status        = 4;
+}
+
+message ListRunsResponse {
+  repeated RunResponse runs = 1;
+}
+
+// ── Run watch ───────────────────────────────────────────────────────────────
+
+message WatchRunRequest {
+  string trace_id = 1;
+}
+
+message RunEvent {
+  string trace_id = 1;
+  oneof event {
+    AgentDispatchedEvent agent_dispatched = 2;
+    AgentStartedEvent    agent_started    = 3;
+    AgentCompletedEvent  agent_completed  = 4;
+    RunCompletedEvent    run_completed    = 5;
+  }
+}
+
+message AgentDispatchedEvent {
+  string agent_run_id = 1;
+  string agent_name   = 2;
+  /// JSON object of resolved agent parameters.
+  string params       = 3;
+}
+
+message AgentStartedEvent {
+  string agent_run_id = 1;
+}
+
+message AgentCompletedEvent {
+  string agent_run_id = 1;
+  bool   success      = 2;
+  string error        = 3;
+}
+
+message RunCompletedEvent {
+  bool   success = 1;
+  string error   = 2;
+}
+
+// ── Agent dispatch watch ─────────────────────────────────────────────────────
+
+message WatchAgentDispatchRequest {
+  /// Only receive dispatch events for this agent name.
+  string agent_name = 1;
+}
+
+// ── Agent lifecycle callbacks ────────────────────────────────────────────────
+
+message AgentLifecycleRequest {
+  string trace_id     = 1;
+  string agent_run_id = 2;
+}
+
+message AgentCompletedRequest {
+  string trace_id     = 1;
+  string agent_run_id = 2;
+  bool   success      = 3;
+  string error        = 4;
 }

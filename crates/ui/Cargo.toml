@@ -1,0 +1,17 @@
+[package]
+name = "ui"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "tuples-ui"
+path = "src/main.rs"
+
+[dependencies]
+dioxus      = { version = "0.6", features = ["desktop"] }
+proto       = { workspace = true }
+tonic       = { workspace = true }
+tokio       = { workspace = true }
+anyhow      = { workspace = true }
+tokio-stream = { workspace = true }
+serde_json   = { workspace = true }

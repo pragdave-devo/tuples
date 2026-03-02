@@ -6,7 +6,12 @@
       "WebFetch(domain:crates.io)",
       "Bash(git add:*)",
       "Bash(git:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(rustc:*)",
+      "WebFetch(domain:dioxuslabs.com)",
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ]
   }
 }

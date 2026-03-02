@@ -4,8 +4,11 @@ use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use tonic::Status;
 
 use proto::tuples::TriggerFiredEvent;
+use tuples_core::playbook::ParamSource;
 use tuples_core::tuple::Tuple;
 use tuples_storage::{PlaybookStore, TupleStore};
+
+// TupleStore uses &self so no Mutex needed — Arc alone is sufficient.
 
 const BATCH_SIZE: usize = 10;
 const BATCH_TIMEOUT: Duration = Duration::from_millis(2);
@@ -24,7 +27,7 @@ pub struct BatchWriter {
 
 impl BatchWriter {
     pub fn new(
-        store: Arc<Mutex<dyn TupleStore>>,
+        store: Arc<dyn TupleStore>,
         playbooks: Arc<Mutex<dyn PlaybookStore>>,
         trigger_tx: broadcast::Sender<TriggerFiredEvent>,
     ) -> Self {
@@ -76,7 +79,7 @@ impl BatchWriter {
 
 async fn run(
     mut rx: mpsc::Receiver<BatchItem>,
-    store: Arc<Mutex<dyn TupleStore>>,
+    store: Arc<dyn TupleStore>,
     playbooks: Arc<Mutex<dyn PlaybookStore>>,
     trigger_tx: broadcast::Sender<TriggerFiredEvent>,
 ) {
@@ -107,7 +110,7 @@ async fn run(
         }
 
         let tuples: Vec<Tuple> = batch.iter().map(|i| i.tuple.clone()).collect();
-        let result = store.lock().await.put_batch(&tuples).await;
+        let result = store.put_batch(&tuples).await;
 
         // Fire triggers — only after a successful commit, before notifying callers so
         // that guaranteed-write callers see events as soon as their put_tuple returns.
@@ -116,27 +119,37 @@ async fn run(
                 for tuple in &tuples {
                     let matchable = tuple.to_matchable();
                     for (playbook_name, trigger) in &all_triggers {
-                        if trigger.filter.matches(&matchable) {
-                            let mapped_params = trigger
-                                .mapping
-                                .iter()
-                                .filter_map(|(param, field)| {
-                                    matchable
-                                        .get(field)
-                                        .and_then(|v| v.as_str())
-                                        .map(|s| (param.clone(), s.to_string()))
-                                })
-                                .collect();
-                            let event = TriggerFiredEvent {
-                                playbook: playbook_name.clone(),
-                                agent: trigger.agent.clone(),
-                                tuple_uuid7: tuple.uuid7.clone(),
-                                tuple_type: tuple.tuple_type.clone(),
-                                tuple_data: tuple.data.to_string(),
-                                mapped_params,
-                            };
-                            let _ = trigger_tx.send(event);
+                        // New format: check tuple_type first, then optional filter.
+                        if tuple.tuple_type != trigger.match_.tuple_type {
+                            continue;
                         }
+                        if !trigger.match_.filter.matches(&matchable) {
+                            continue;
+                        }
+                        let mapped_params = trigger
+                            .execution
+                            .params
+                            .iter()
+                            .filter_map(|(param, source)| match source {
+                                ParamSource::Field(field) => matchable
+                                    .get(field)
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| (param.clone(), s.to_string())),
+                                ParamSource::Literal(v) => {
+                                    Some((param.clone(), v.to_string()))
+                                }
+                            })
+                            .collect();
+                        let event = TriggerFiredEvent {
+                            playbook: playbook_name.clone(),
+                            agent: trigger.execution.agent.clone(),
+                            tuple_uuid7: tuple.uuid7.clone(),
+                            tuple_type: tuple.tuple_type.clone(),
+                            tuple_data: tuple.data.to_string(),
+                            mapped_params,
+                            trace_id: tuple.trace_id.clone(),
+                        };
+                        let _ = trigger_tx.send(event);
                     }
                 }
             }

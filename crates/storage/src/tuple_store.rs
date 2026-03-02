@@ -1,17 +1,18 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::sync::RwLock;
 use tuples_core::tuple::Tuple;
 
 /// Persistent storage for tuples.
 #[async_trait]
 pub trait TupleStore: Send + Sync {
     /// Store a tuple. Overwrites any existing tuple with the same uuid7.
-    async fn put(&mut self, tuple: Tuple) -> Result<()>;
+    async fn put(&self, tuple: Tuple) -> Result<()>;
     /// Retrieve a tuple by uuid7, or `None` if not found.
     async fn get(&self, uuid7: &str) -> Result<Option<Tuple>>;
     /// Store multiple tuples atomically. Default implementation calls `put` sequentially.
-    async fn put_batch(&mut self, tuples: &[Tuple]) -> Result<()> {
+    async fn put_batch(&self, tuples: &[Tuple]) -> Result<()> {
         for t in tuples {
             self.put(t.clone()).await?;
         }
@@ -22,18 +23,18 @@ pub trait TupleStore: Send + Sync {
 /// In-memory tuple store (for testing and early stages).
 #[derive(Default)]
 pub struct InMemoryTupleStore {
-    tuples: HashMap<String, Tuple>,
+    tuples: RwLock<HashMap<String, Tuple>>,
 }
 
 #[async_trait]
 impl TupleStore for InMemoryTupleStore {
-    async fn put(&mut self, tuple: Tuple) -> Result<()> {
-        self.tuples.insert(tuple.uuid7.clone(), tuple);
+    async fn put(&self, tuple: Tuple) -> Result<()> {
+        self.tuples.write().unwrap().insert(tuple.uuid7.clone(), tuple);
         Ok(())
     }
 
     async fn get(&self, uuid7: &str) -> Result<Option<Tuple>> {
-        Ok(self.tuples.get(uuid7).cloned())
+        Ok(self.tuples.read().unwrap().get(uuid7).cloned())
     }
 }
 
@@ -55,7 +56,7 @@ mod tests {
 
     #[tokio::test]
     async fn put_and_get() {
-        let mut store = InMemoryTupleStore::default();
+        let store = InMemoryTupleStore::default();
         let t = example_tuple("id-1");
         store.put(t.clone()).await.unwrap();
         let result = store.get("id-1").await.unwrap();

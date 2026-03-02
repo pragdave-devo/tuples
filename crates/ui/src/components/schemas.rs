@@ -112,13 +112,13 @@ fn SchemaList(mut view: Signal<SchemaView>) -> Element {
 
     match &*schemas.read_unchecked() {
         None => rsx! {
-            div { style: "padding:3rem; text-align:center; color:#94a3b8;",
+            div { style: "padding:3rem; text-align:center; color:var(--text-muted);",
                 "Loading schemas…"
             }
         },
         Some(Err(e)) => rsx! {
-            div { style: "padding:1rem; color:#ef4444; background:#fef2f2; \
-                           border-radius:6px; border:1px solid #fecaca;",
+            div { style: "padding:1rem; color:var(--error); background:var(--error-bg); \
+                           border-radius:6px; border:1px solid var(--error-border);",
                 "Could not load schemas: {e}"
             }
         },
@@ -133,9 +133,9 @@ fn SchemaList(mut view: Signal<SchemaView>) -> Element {
             rsx! {
                 div { style: "display:flex; align-items:center; \
                                justify-content:space-between; margin-bottom:1rem;",
-                    h2 { style: "margin:0; font-size:1.1rem; color:#1e293b;",
+                    h2 { style: "margin:0; font-size:1.1rem; color:var(--text-primary);",
                         "Schemas "
-                        span { style: "font-weight:400; color:#94a3b8;", "({total})" }
+                        span { style: "font-weight:400; color:var(--text-muted);", "({total})" }
                     }
                     button {
                         style: BTN_PRIMARY,
@@ -144,10 +144,10 @@ fn SchemaList(mut view: Signal<SchemaView>) -> Element {
                     }
                 }
 
-                div { style: "border:1px solid #e2e8f0; border-radius:8px; \
-                               overflow:hidden; background:#fff;",
+                div { style: "border:1px solid var(--border); border-radius:8px; \
+                               overflow:hidden; background:var(--bg-surface);",
                     if visible.is_empty() {
-                        div { style: "padding:3rem; text-align:center; color:#94a3b8;",
+                        div { style: "padding:3rem; text-align:center; color:var(--text-muted);",
                             "No schemas registered yet."
                         }
                     }
@@ -165,7 +165,7 @@ fn SchemaList(mut view: Signal<SchemaView>) -> Element {
                             onclick: move |_| page.set(pg.saturating_sub(1)),
                             "← Prev"
                         }
-                        span { style: "color:#64748b; font-size:0.9rem;",
+                        span { style: "color:var(--text-secondary); font-size:0.9rem;",
                             "Page {pg + 1} of {total_pages}"
                         }
                         button {
@@ -186,10 +186,10 @@ fn SchemaRow(name: String, mut view: Signal<SchemaView>) -> Element {
     rsx! {
         div {
             style: "display:flex; align-items:center; justify-content:space-between; \
-                    padding:0.75rem 1rem; border-bottom:1px solid #f1f5f9; cursor:pointer;",
+                    padding:0.75rem 1rem; border-bottom:1px solid var(--border-light); cursor:pointer;",
             onclick: { let n = name.clone(); move |_| view.set(SchemaView::Detail(n.clone())) },
-            span { style: "font-size:0.95rem; color:#1e293b;", "{name}" }
-            span { style: "color:#cbd5e1; font-size:1.1rem;", "›" }
+            span { style: "font-size:0.95rem; color:var(--text-primary);", "{name}" }
+            span { style: "color:var(--text-muted); font-size:1.1rem;", "›" }
         }
     }
 }
@@ -285,8 +285,8 @@ fn SchemaDetail(name: String, mut view: Signal<SchemaView>) -> Element {
         }
 
         match &*schema.read_unchecked() {
-            None => rsx! { p { style: "color:#94a3b8;", "Loading…" } },
-            Some(Err(e)) => rsx! { p { style: "color:#ef4444;", "Error: {e}" } },
+            None => rsx! { p { style: "color:var(--text-muted);", "Loading…" } },
+            Some(Err(e)) => rsx! { p { style: "color:var(--error);", "Error: {e}" } },
             Some(Ok(definition)) => {
                 let rows          = schema_to_rows(definition);
                 let desc          = schema_description(definition);
@@ -306,25 +306,25 @@ fn SchemaDetail(name: String, mut view: Signal<SchemaView>) -> Element {
                     }
 
                     if !desc.is_empty() {
-                        p { style: "margin:0 0 1rem; color:#64748b; font-size:0.9rem; \
+                        p { style: "margin:0 0 1rem; color:var(--text-secondary); font-size:0.9rem; \
                                     font-style:italic;",
                             "{desc}"
                         }
                     }
 
                     if rows.is_empty() {
-                        div { style: "padding:2rem; text-align:center; color:#94a3b8; \
-                                       border:1px dashed #e2e8f0; border-radius:8px; \
+                        div { style: "padding:2rem; text-align:center; color:var(--text-muted); \
+                                       border:1px dashed var(--border); border-radius:8px; \
                                        font-size:0.9rem; margin-bottom:1rem;",
                             "No properties defined."
                         }
                     } else {
-                        div { style: "border:1px solid #e2e8f0; border-radius:8px; \
+                        div { style: "border:1px solid var(--border); border-radius:8px; \
                                        overflow:hidden; margin-bottom:1rem;",
                             table { style: "width:100%; border-collapse:collapse; font-size:0.9rem;",
                                 thead {
-                                    tr { style: "background:#f8fafc; \
-                                                  border-bottom:1px solid #e2e8f0;",
+                                    tr { style: "background:var(--bg-surface-alt); \
+                                                  border-bottom:1px solid var(--border);",
                                         th { style: TH_STYLE, "Name" }
                                         th { style: TH_STYLE, "Type" }
                                         th { style: "{TH_STYLE} text-align:center;", "Required" }
@@ -335,13 +335,13 @@ fn SchemaDetail(name: String, mut view: Signal<SchemaView>) -> Element {
                                     for (i, row) in rows.iter().enumerate() {
                                         tr {
                                             style: if i % 2 == 0 {
-                                                "background:#fff;"
+                                                "background:var(--bg-surface);"
                                             } else {
-                                                "background:#f8fafc;"
+                                                "background:var(--bg-surface-alt);"
                                             },
                                             td { style: TD_STYLE,
                                                 span { style: "font-family:monospace; \
-                                                                font-weight:600; color:#1e293b;",
+                                                                font-weight:600; color:var(--text-primary);",
                                                     "{row.name}"
                                                 }
                                             }
@@ -350,14 +350,14 @@ fn SchemaDetail(name: String, mut view: Signal<SchemaView>) -> Element {
                                             }
                                             td { style: "{TD_STYLE} text-align:center;",
                                                 if row.required {
-                                                    span { style: "color:#16a34a; font-size:1rem;",
+                                                    span { style: "color:var(--success); font-size:1rem;",
                                                         "✓"
                                                     }
                                                 } else {
-                                                    span { style: "color:#cbd5e1;", "—" }
+                                                    span { style: "color:var(--text-muted);", "—" }
                                                 }
                                             }
-                                            td { style: "{TD_STYLE} color:#64748b;",
+                                            td { style: "{TD_STYLE} color:var(--text-secondary);",
                                                 "{row.description}"
                                             }
                                         }
@@ -368,13 +368,13 @@ fn SchemaDetail(name: String, mut view: Signal<SchemaView>) -> Element {
                     }
 
                     details { style: "margin-bottom:1rem;",
-                        summary { style: "cursor:pointer; color:#64748b; font-size:0.85rem; \
+                        summary { style: "cursor:pointer; color:var(--text-secondary); font-size:0.85rem; \
                                           user-select:none; padding:0.4rem 0;",
                             "Raw JSON"
                         }
-                        pre { style: "background:#f8fafc; border:1px solid #e2e8f0; \
+                        pre { style: "background:var(--bg-surface-alt); border:1px solid var(--border); \
                                        border-radius:8px; padding:1.25rem; overflow:auto; \
-                                       font-size:0.85rem; line-height:1.6; color:#334155; \
+                                       font-size:0.85rem; line-height:1.6; color:var(--text-secondary); \
                                        white-space:pre-wrap; word-break:break-word; \
                                        margin-top:0.5rem;",
                             "{pretty}"
@@ -451,7 +451,7 @@ fn PropertyList(mut properties: Signal<Vec<PropertyRow>>) -> Element {
     rsx! {
         div { style: "display:flex; align-items:center; \
                        justify-content:space-between; margin-bottom:0.75rem;",
-            h3 { style: "margin:0; font-size:0.95rem; font-weight:600; color:#374151;",
+            h3 { style: "margin:0; font-size:0.95rem; font-weight:600; color:var(--text-primary);",
                 "Properties"
             }
             button {
@@ -462,8 +462,8 @@ fn PropertyList(mut properties: Signal<Vec<PropertyRow>>) -> Element {
         }
 
         if len == 0 {
-            div { style: "padding:2rem; text-align:center; color:#94a3b8; \
-                           border:1px dashed #e2e8f0; border-radius:8px; font-size:0.9rem;",
+            div { style: "padding:2rem; text-align:center; color:var(--text-muted); \
+                           border:1px dashed var(--border); border-radius:8px; font-size:0.9rem;",
                 "No properties yet. Click \"+ Add Property\" to add one."
             }
         }
@@ -495,35 +495,35 @@ fn PropertyRowEditor(idx: usize, mut properties: Signal<Vec<PropertyRow>>) -> El
         rsx! {
             div {
                 style: "display:flex; align-items:center; gap:0.75rem; \
-                         border:1px solid #e2e8f0; border-radius:8px; \
-                         padding:0.6rem 1rem; background:#fff; \
+                         border:1px solid var(--border); border-radius:8px; \
+                         padding:0.6rem 1rem; background:var(--bg-surface); \
                          margin-bottom:0.5rem; cursor:pointer;",
                 onclick: move |_| expanded.set(true),
 
-                span { style: "font-weight:600; color:#1e293b; font-size:0.9rem; \
+                span { style: "font-weight:600; color:var(--text-primary); font-size:0.9rem; \
                                 min-width:8rem; flex-shrink:0;",
                     "{prop.name}"
                 }
                 TypeBadge { type_: prop.type_.clone() }
                 if prop.required {
-                    span { style: "font-size:0.75rem; font-weight:500; color:#16a34a; \
+                    span { style: "font-size:0.75rem; font-weight:500; color:var(--success); \
                                     background:#f0fdf4; border:1px solid #bbf7d0; \
                                     border-radius:4px; padding:0.1rem 0.4rem; flex-shrink:0;",
                         "required"
                     }
                 }
-                span { style: "flex:1; color:#94a3b8; font-size:0.85rem; overflow:hidden; \
+                span { style: "flex:1; color:var(--text-muted); font-size:0.85rem; overflow:hidden; \
                                 text-overflow:ellipsis; white-space:nowrap;",
                     "{desc_preview}"
                 }
-                span { style: "color:#94a3b8; font-size:0.8rem; flex-shrink:0;", "▾" }
+                span { style: "color:var(--text-muted); font-size:0.8rem; flex-shrink:0;", "▾" }
             }
         }
     } else {
         // ── expanded view ─────────────────────────────────────────────────────
         rsx! {
-            div { style: "border:2px solid #2563eb; border-radius:8px; padding:1rem; \
-                           background:#fff; margin-bottom:0.75rem;",
+            div { style: "border:2px solid var(--accent); border-radius:8px; padding:1rem; \
+                           background:var(--bg-surface); margin-bottom:0.75rem;",
 
                 // ── header: collapse + delete ──
                 div { style: "display:flex; justify-content:space-between; \
@@ -596,9 +596,10 @@ fn PropertyRowEditor(idx: usize, mut properties: Signal<Vec<PropertyRow>>) -> El
                 // ── description ──
                 label { style: FIELD_LABEL, "Description" }
                 textarea {
-                    style: "width:100%; padding:0.5rem 0.75rem; border:1px solid #e2e8f0; \
+                    style: "width:100%; padding:0.5rem 0.75rem; border:1px solid var(--border); \
                             border-radius:6px; font-size:0.875rem; line-height:1.5; \
-                            color:#374151; resize:vertical; min-height:3.5rem; \
+                            color:var(--text-primary); background:var(--input-bg); \
+                            resize:vertical; min-height:3.5rem; \
                             box-sizing:border-box; font-family:inherit;",
                     placeholder: "Describe this property (used by AI agents)…",
                     value: "{prop.description}",
@@ -640,8 +641,8 @@ fn ErrorBanner(error: Signal<Option<String>>) -> Element {
     match &*error.read_unchecked() {
         None => rsx! {},
         Some(msg) => rsx! {
-            div { style: "padding:0.75rem 1rem; background:#fef2f2; border:1px solid #fecaca; \
-                           border-radius:6px; color:#ef4444; margin-bottom:1rem; font-size:0.9rem;",
+            div { style: "padding:0.75rem 1rem; background:var(--error-bg); border:1px solid var(--error-border); \
+                           border-radius:6px; color:var(--error); margin-bottom:1rem; font-size:0.9rem;",
                 "{msg}"
             }
         },
@@ -661,32 +662,32 @@ fn pretty_json(s: &str) -> String {
 const HDR_ROW: &str =
     "display:flex; align-items:center; gap:0.75rem; margin-bottom:1.5rem;";
 const HDR_TITLE: &str =
-    "flex:1; margin:0; font-size:1.1rem; color:#1e293b;";
+    "flex:1; margin:0; font-size:1.1rem; color:var(--text-primary);";
 
 const FIELD_LABEL: &str =
-    "display:block; font-size:0.8rem; font-weight:500; color:#6b7280; margin-bottom:0.3rem;";
+    "display:block; font-size:0.8rem; font-weight:500; color:var(--text-secondary); margin-bottom:0.3rem;";
 const FIELD_INPUT: &str =
-    "width:100%; padding:0.4rem 0.65rem; border:1px solid #e2e8f0; border-radius:6px; \
-     font-size:0.9rem; color:#1e293b; box-sizing:border-box;";
+    "width:100%; padding:0.4rem 0.65rem; border:1px solid var(--border); border-radius:6px; \
+     font-size:0.9rem; color:var(--text-primary); background:var(--input-bg); box-sizing:border-box;";
 const FIELD_SELECT: &str =
-    "padding:0.4rem 0.65rem; border:1px solid #e2e8f0; border-radius:6px; \
-     font-size:0.9rem; color:#1e293b; background:#fff; cursor:pointer;";
+    "padding:0.4rem 0.65rem; border:1px solid var(--border); border-radius:6px; \
+     font-size:0.9rem; color:var(--text-primary); background:var(--bg-surface); cursor:pointer;";
 
 const BTN_PRIMARY: &str =
     "padding:0.4rem 1rem; border:none; border-radius:6px; \
-     background:#2563eb; color:#fff; cursor:pointer; font-size:0.9rem;";
+     background:var(--accent); color:#fff; cursor:pointer; font-size:0.9rem;";
 const BTN_OUTLINE: &str =
-    "padding:0.4rem 0.8rem; border:1px solid #e2e8f0; border-radius:6px; \
-     background:#fff; cursor:pointer; color:#374151; font-size:0.9rem;";
+    "padding:0.4rem 0.8rem; border:1px solid var(--border); border-radius:6px; \
+     background:var(--bg-surface); cursor:pointer; color:var(--text-primary); font-size:0.9rem;";
 const BTN_OUTLINE_SM: &str =
-    "padding:0.35rem 0.75rem; border:1px solid #e2e8f0; border-radius:6px; \
-     background:#fff; cursor:pointer; color:#64748b; font-size:0.85rem;";
+    "padding:0.35rem 0.75rem; border:1px solid var(--border); border-radius:6px; \
+     background:var(--bg-surface); cursor:pointer; color:var(--text-secondary); font-size:0.85rem;";
 const BTN_DANGER_SM: &str =
-    "padding:0.35rem 0.6rem; border:1px solid #fecaca; border-radius:6px; \
-     background:#fff; cursor:pointer; color:#ef4444; font-size:0.9rem;";
+    "padding:0.35rem 0.6rem; border:1px solid var(--error-border); border-radius:6px; \
+     background:var(--bg-surface); cursor:pointer; color:var(--error); font-size:0.9rem;";
 
 const TH_STYLE: &str =
     "padding:0.6rem 1rem; text-align:left; font-size:0.8rem; font-weight:600; \
-     color:#64748b; text-transform:uppercase; letter-spacing:0.05em;";
+     color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.05em;";
 const TD_STYLE: &str =
-    "padding:0.6rem 1rem; border-top:1px solid #f1f5f9; vertical-align:middle;";
+    "padding:0.6rem 1rem; border-top:1px solid var(--border-light); vertical-align:middle;";

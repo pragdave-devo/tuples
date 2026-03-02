@@ -7,7 +7,7 @@ pub fn StatusBar() -> Element {
 
     match &*version.read_unchecked() {
         None => rsx! { span { "Connecting..." } },
-        Some(Ok(v)) => rsx! { span { style: "color:green", "Server version: {v}" } },
-        Some(Err(e)) => rsx! { span { style: "color:red", "Error: {e}" } },
+        Some(Ok(v)) => rsx! { span { style: "color:var(--success)", "Server version: {v}" } },
+        Some(Err(e)) => rsx! { span { style: "color:var(--error)", "Error: {e}" } },
     }
 }

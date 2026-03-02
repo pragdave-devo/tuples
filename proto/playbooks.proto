@@ -1,0 +1,119 @@
+// Playbook management and trigger event streaming API.
+//
+// Playbooks define automated workflows: a set of agents orchestrated by a
+// conductor, with triggers that fire when matching tuples arrive. When a tuple
+// is stored via PutTuple, the batch writer evaluates all playbook triggers and
+// emits TriggerFiredEvents for matches.
+//
+// Typical workflow:
+//   1. RegisterSchema("order", ...) — see schemas.proto
+//   2. RegisterAgent("processor", ...) — see agents.proto
+//   3. RegisterPlaybook({name: "fulfil", triggers: [...]})
+//   4. PutTuple(type="order") triggers evaluation
+//   5. WatchTriggers receives TriggerFiredEvent for matching triggers
+//
+// Design note: playbook definitions are JSON strings to support rich nested
+// structures (triggers, param mappings) without deep proto message nesting.
+
+syntax = "proto3";
+
+package tuples;
+
+import "common.proto";
+
+// Playbook registry and trigger streaming service.
+//
+// Manages playbook CRUD and provides a server-streaming RPC for clients
+// (including the executor and UI) to observe trigger-fired events in real time.
+service Playbooks {
+  // Register a new playbook or overwrite an existing one.
+  //
+  // The definition must be a valid JSON-serialized Playbook. Trigger validation
+  // is performed: every trigger's tuple_type must reference a registered schema,
+  // and Field param sources must reference known schema properties or tuple
+  // metadata fields (uuid7, trace_id, created_at, type).
+  //
+  // Errors:
+  //   INVALID_ARGUMENT — JSON parse failure, unknown tuple_type, or unknown field reference.
+  rpc RegisterPlaybook(RegisterPlaybookRequest) returns (Empty);
+
+  // Retrieve a playbook by name.
+  //
+  // Errors:
+  //   NOT_FOUND — no playbook with that name exists.
+  rpc GetPlaybook(GetPlaybookRequest) returns (PlaybookResponse);
+
+  // List all registered playbooks.
+  //
+  // Returns an empty list when no playbooks are registered.
+  rpc ListPlaybooks(Empty) returns (ListPlaybooksResponse);
+
+  // Stream trigger-fired events in real time (server-streaming).
+  //
+  // Optionally filter to a single playbook by name. An empty playbook field
+  // means "all playbooks". The stream stays open until the client disconnects.
+  // Lagged receivers (slow consumers) silently skip missed events.
+  rpc WatchTriggers(WatchTriggersRequest) returns (stream TriggerFiredEvent);
+}
+
+// Request to register (or overwrite) a playbook.
+message RegisterPlaybookRequest {
+  // JSON-serialized Playbook definition.
+  // Must include name, conductor, agents, and triggers arrays.
+  string definition = 1;
+}
+
+// Request to retrieve a single playbook by name.
+message GetPlaybookRequest {
+  // Name of the playbook to retrieve.
+  string name = 1;
+}
+
+// A single playbook record.
+message PlaybookResponse {
+  // The playbook's unique name.
+  string name = 1;
+
+  // JSON-serialized Playbook definition.
+  string definition = 2;
+}
+
+// Response containing all registered playbooks.
+message ListPlaybooksResponse {
+  // All registered playbooks, in no guaranteed order.
+  repeated PlaybookResponse playbooks = 1;
+}
+
+// Request to subscribe to trigger-fired events.
+message WatchTriggersRequest {
+  // Filter to a specific playbook; empty means all playbooks.
+  string playbook = 1;
+}
+
+// Event emitted when a stored tuple matches a playbook trigger.
+//
+// Contains the resolved agent, the matched tuple's identity and data, and the
+// parameter mapping from trigger execution config. The executor uses these
+// events to dispatch agent runs.
+message TriggerFiredEvent {
+  // Name of the playbook that owns the matched trigger.
+  string playbook    = 1;
+
+  // Name of the agent to dispatch (from trigger execution config).
+  string agent       = 2;
+
+  // UUID v7 of the tuple that matched.
+  string tuple_uuid7 = 3;
+
+  // Schema type of the matched tuple.
+  string tuple_type  = 4;
+
+  // JSON-serialized data payload of the matched tuple.
+  string tuple_data  = 5;
+
+  // Resolved parameters: param_name -> value (from Literal or Field sources).
+  map<string, string> mapped_params = 6;
+
+  // Correlation trace ID from the matched tuple.
+  string trace_id    = 7;
+}

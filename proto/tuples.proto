@@ -1,266 +1,149 @@
+// Tuple storage and filter matching API.
+//
+// Tuples are the core data unit — timestamped, typed JSON objects validated
+// against a registered schema. Filters are persistent match rules evaluated
+// against every incoming tuple to drive the trigger/playbook engine.
+//
+// Typical write path:
+//   1. PutTuple(type="order", data={...}) — validated, assigned UUID v7
+//   2. BatchWriter flushes to storage and evaluates triggers
+//   3. Matching triggers fire TriggerFiredEvents (see playbooks.proto)
+//
+// Design note: tuple data and filter definitions are JSON strings to keep
+// the proto surface simple and avoid deep nesting of proto messages.
+
 syntax = "proto3";
 
 package tuples;
 
-service Tuples {
-  rpc GetVersion(Empty) returns (VersionResponse);
+import "common.proto";
 
-  rpc RegisterSchema(RegisterSchemaRequest) returns (Empty);
-  rpc GetSchema(GetSchemaRequest) returns (SchemaResponse);
-  rpc ListSchemas(Empty) returns (ListSchemasResponse);
-
+// Tuple storage and filter matching service.
+//
+// Handles CRUD for tuples and filters. PutTuple is the primary write entry
+// point — it validates data against the named schema, assigns a UUID v7, and
+// enqueues the tuple for durable storage and trigger evaluation.
+service TupleStore {
+  // Store a new tuple.
+  //
+  // The tuple's `type` must reference a registered schema. The `data` payload
+  // is validated against that schema before storage. Returns the server-
+  // generated UUID v7 and creation timestamp.
+  //
+  // Errors:
+  //   NOT_FOUND — schema for the given type is not registered.
+  //   INVALID_ARGUMENT — data fails JSON parse or schema validation.
   rpc PutTuple(PutTupleRequest) returns (PutTupleResponse);
+
+  // Retrieve a tuple by its UUID v7.
+  //
+  // Errors:
+  //   NOT_FOUND — no tuple with that UUID exists.
   rpc GetTuple(GetTupleRequest) returns (TupleResponse);
 
+  // Register a persistent filter definition.
+  //
+  // Filters are evaluated by MatchTuple and by the trigger engine on each
+  // incoming tuple. The definition must be a valid JSON-serialized Filter.
+  //
+  // Errors:
+  //   INVALID_ARGUMENT — definition is not valid JSON or not a valid Filter.
   rpc RegisterFilter(RegisterFilterRequest) returns (Empty);
+
+  // List all registered filters.
+  //
+  // Returns an empty list when no filters are registered.
   rpc ListFilters(Empty) returns (ListFiltersResponse);
+
+  // Test a JSON object against all registered filters.
+  //
+  // Returns the IDs of every filter that matches the input data. Useful for
+  // debugging filter configurations without storing a real tuple.
+  //
+  // Errors:
+  //   INVALID_ARGUMENT — data is not valid JSON.
   rpc MatchTuple(MatchTupleRequest) returns (MatchTupleResponse);
-
-  rpc RegisterPlaybook(RegisterPlaybookRequest) returns (Empty);
-  rpc GetPlaybook(GetPlaybookRequest) returns (PlaybookResponse);
-  rpc ListPlaybooks(Empty) returns (ListPlaybooksResponse);
-  rpc WatchTriggers(WatchTriggersRequest) returns (stream TriggerFiredEvent);
-
-  // Agent management
-  rpc RegisterAgent(RegisterAgentRequest) returns (Empty);
-  rpc GetAgent(GetAgentRequest) returns (AgentResponse);
-  rpc ListAgents(Empty) returns (ListAgentsResponse);
-
-  // Playbook execution
-  rpc RunPlaybook(RunPlaybookRequest) returns (RunPlaybookResponse);
-  rpc GetRun(GetRunRequest) returns (RunResponse);
-  rpc ListRuns(Empty) returns (ListRunsResponse);
-
-  // Agent lifecycle callbacks (called by agents themselves)
-  rpc NotifyAgentStarted(AgentLifecycleRequest) returns (Empty);
-  rpc NotifyAgentCompleted(AgentCompletedRequest) returns (Empty);
-
-  // Pubsub for UI — stream of run lifecycle events
-  rpc WatchRun(WatchRunRequest) returns (stream RunEvent);
-
-  // Pubsub for agents — subscribe to receive dispatch events
-  rpc WatchAgentDispatch(WatchAgentDispatchRequest) returns (stream AgentDispatchedEvent);
 }
 
-message Empty {}
-
-message VersionResponse {
-  string version = 1;
-}
-
-message RegisterSchemaRequest {
-  string name = 1;
-  /// JSON Schema definition serialized as a JSON string.
-  string definition = 2;
-}
-
-message GetSchemaRequest {
-  string name = 1;
-}
-
-message SchemaResponse {
-  string name = 1;
-  string definition = 2;
-}
-
-message ListSchemasResponse {
-  repeated SchemaResponse schemas = 1;
-}
-
+// Request to store a new tuple.
 message PutTupleRequest {
+  // Correlation ID linking related tuples across a workflow.
   string trace_id = 1;
-  /// Schema name; must be registered before putting a tuple.
+
+  // Schema name; must be registered before putting a tuple.
   string type = 2;
-  /// User payload as a JSON object string; validated against the named schema.
+
+  // User payload as a JSON object string; validated against the named schema.
   string data = 3;
-  /// If true, block until the tuple is durably committed before returning.
-  /// If false (default), the response may be returned before the write is committed.
+
+  // If true, block until the tuple is durably committed before returning.
+  // If false (default), the response may be returned before the write is committed.
   bool guaranteed_write = 4;
 }
 
+// Response after successfully storing a tuple.
 message PutTupleResponse {
-  /// Server-generated UUID v7.
+  // Server-generated UUID v7 (time-sortable, globally unique).
   string uuid7 = 1;
-  /// Server-assigned creation timestamp (RFC 3339).
+
+  // Server-assigned creation timestamp (RFC 3339).
   string created_at = 2;
 }
 
+// Request to retrieve a single tuple.
 message GetTupleRequest {
+  // UUID v7 of the tuple to retrieve.
   string uuid7 = 1;
 }
 
+// A single stored tuple.
 message TupleResponse {
+  // Server-generated UUID v7.
   string uuid7 = 1;
+
+  // Correlation trace ID supplied at creation.
   string trace_id = 2;
+
+  // Creation timestamp (RFC 3339).
   string created_at = 3;
+
+  // Schema type name.
   string type = 4;
+
+  // Tuple payload as a JSON object string.
   string data = 5;
 }
 
+// Request to register a persistent filter.
 message RegisterFilterRequest {
-  /// JSON-serialized Filter definition.
+  // JSON-serialized Filter definition.
+  // Must include an "id" field and optional match clauses (exact, wildcards, predicates).
   string definition = 1;
 }
 
+// A single filter record.
 message FilterResponse {
+  // Unique filter ID (from the definition).
   string id = 1;
-  /// JSON-serialized Filter definition.
+
+  // JSON-serialized Filter definition.
   string definition = 2;
 }
 
+// Response containing all registered filters.
 message ListFiltersResponse {
+  // All registered filters, in no guaranteed order.
   repeated FilterResponse filters = 1;
 }
 
+// Request to test data against all registered filters.
 message MatchTupleRequest {
-  /// JSON object to match against registered filters.
+  // JSON object to match against registered filters.
   string data = 1;
 }
 
+// Response listing which filters matched the input data.
 message MatchTupleResponse {
+  // IDs of all filters that matched.
   repeated string filter_ids = 1;
-}
-
-message RegisterPlaybookRequest {
-  /// JSON-serialized Playbook definition.
-  string definition = 1;
-}
-
-message GetPlaybookRequest {
-  string name = 1;
-}
-
-message PlaybookResponse {
-  string name = 1;
-  /// JSON-serialized Playbook definition.
-  string definition = 2;
-}
-
-message ListPlaybooksResponse {
-  repeated PlaybookResponse playbooks = 1;
-}
-
-message WatchTriggersRequest {
-  /// Filter to a specific playbook; empty means all playbooks.
-  string playbook = 1;
-}
-
-message TriggerFiredEvent {
-  string playbook    = 1;
-  string agent       = 2;
-  string tuple_uuid7 = 3;
-  string tuple_type  = 4;
-  string tuple_data  = 5;
-  map<string, string> mapped_params = 6;
-  string trace_id    = 7;
-}
-
-// ── Agent management ────────────────────────────────────────────────────────
-
-message RegisterAgentRequest {
-  string name        = 1;
-  string description = 2;
-  /// Name of the registered Schema for this agent's input parameters.
-  string schema      = 3;
-}
-
-message GetAgentRequest {
-  string name = 1;
-}
-
-message AgentResponse {
-  string name        = 1;
-  string description = 2;
-  string schema      = 3;
-}
-
-message ListAgentsResponse {
-  repeated AgentResponse agents = 1;
-}
-
-// ── Playbook execution ───────────────────────────────────────────────────────
-
-message RunPlaybookRequest {
-  string playbook_name = 1;
-  /// JSON object matching the conductor agent's schema.
-  string params        = 2;
-}
-
-message RunPlaybookResponse {
-  string trace_id = 1;
-}
-
-message GetRunRequest {
-  string trace_id = 1;
-}
-
-message RunResponse {
-  string trace_id      = 1;
-  string playbook_name = 2;
-  string started_at    = 3;
-  /// Serialised RunStatus: "Running", "Completed", or "Failed: <reason>".
-  string status        = 4;
-}
-
-message ListRunsResponse {
-  repeated RunResponse runs = 1;
-}
-
-// ── Run watch ───────────────────────────────────────────────────────────────
-
-message WatchRunRequest {
-  string trace_id = 1;
-}
-
-message RunEvent {
-  string trace_id = 1;
-  oneof event {
-    AgentDispatchedEvent agent_dispatched = 2;
-    AgentStartedEvent    agent_started    = 3;
-    AgentCompletedEvent  agent_completed  = 4;
-    RunCompletedEvent    run_completed    = 5;
-  }
-}
-
-message AgentDispatchedEvent {
-  string agent_run_id = 1;
-  string agent_name   = 2;
-  /// JSON object of resolved agent parameters.
-  string params       = 3;
-}
-
-message AgentStartedEvent {
-  string agent_run_id = 1;
-}
-
-message AgentCompletedEvent {
-  string agent_run_id = 1;
-  bool   success      = 2;
-  string error        = 3;
-}
-
-message RunCompletedEvent {
-  bool   success = 1;
-  string error   = 2;
-}
-
-// ── Agent dispatch watch ─────────────────────────────────────────────────────
-
-message WatchAgentDispatchRequest {
-  /// Only receive dispatch events for this agent name.
-  string agent_name = 1;
-}
-
-// ── Agent lifecycle callbacks ────────────────────────────────────────────────
-
-message AgentLifecycleRequest {
-  string trace_id     = 1;
-  string agent_run_id = 2;
-}
-
-message AgentCompletedRequest {
-  string trace_id     = 1;
-  string agent_run_id = 2;
-  bool   success      = 3;
-  string error        = 4;
 }

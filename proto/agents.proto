@@ -1,0 +1,78 @@
+// Agent management API.
+//
+// Agents are named workers that execute playbook steps. Each agent declares
+// which schema governs its input parameters. Playbook triggers reference agents
+// by name in their execution config, and the executor dispatches work to agents
+// via WatchAgentDispatch (see runs.proto).
+//
+// Typical workflow:
+//   1. RegisterSchema("order", ...) — defines the agent's parameter schema
+//   2. RegisterAgent("processor", schema="order")
+//   3. RegisterPlaybook references "processor" in triggers
+//   4. RunPlaybook dispatches to "processor" when triggers fire
+
+syntax = "proto3";
+
+package tuples;
+
+import "common.proto";
+
+// Agent registry service.
+//
+// Manages agent CRUD. Agents must be registered before they can be referenced
+// in playbook definitions or receive dispatch events.
+service Agents {
+  // Register a new agent or overwrite an existing one.
+  //
+  // The agent's schema field must name a registered schema (though this is
+  // not validated at registration time — validation happens when a playbook
+  // referencing the agent is registered or executed).
+  rpc RegisterAgent(RegisterAgentRequest) returns (Empty);
+
+  // Retrieve an agent by name.
+  //
+  // Errors:
+  //   NOT_FOUND — no agent with that name exists.
+  rpc GetAgent(GetAgentRequest) returns (AgentResponse);
+
+  // List all registered agents.
+  //
+  // Returns an empty list when no agents are registered.
+  rpc ListAgents(Empty) returns (ListAgentsResponse);
+}
+
+// Request to register (or overwrite) an agent.
+message RegisterAgentRequest {
+  // Unique name for the agent (e.g. "processor", "notifier").
+  string name        = 1;
+
+  // Human-readable description of what this agent does.
+  string description = 2;
+
+  // Name of the registered Schema for this agent's input parameters.
+  string schema      = 3;
+}
+
+// Request to retrieve a single agent by name.
+message GetAgentRequest {
+  // Name of the agent to retrieve.
+  string name = 1;
+}
+
+// A single agent record.
+message AgentResponse {
+  // The agent's unique name.
+  string name        = 1;
+
+  // Human-readable description.
+  string description = 2;
+
+  // Schema name governing the agent's input parameters.
+  string schema      = 3;
+}
+
+// Response containing all registered agents.
+message ListAgentsResponse {
+  // All registered agents, in no guaranteed order.
+  repeated AgentResponse agents = 1;
+}

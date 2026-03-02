@@ -1,0 +1,77 @@
+// Schema management API.
+//
+// Schemas define the structure of tuple data using JSON Schema (draft 2020-12).
+// A schema must be registered before tuples of that type can be stored (PutTuple
+// validates against it). Agents reference schemas to define their input parameters,
+// and playbook triggers reference schemas via tuple_type.
+//
+// Typical workflow:
+//   1. RegisterSchema("order", <json-schema>)
+//   2. PutTuple(type="order", data=...) — validated against the "order" schema
+//
+// Design note: definitions are passed as JSON strings rather than structured
+// proto messages, keeping the proto surface small and allowing arbitrary JSON
+// Schema features without proto changes.
+
+syntax = "proto3";
+
+package tuples;
+
+import "common.proto";
+
+// Schema registry service.
+//
+// Manages named JSON Schema definitions that govern tuple validation.
+// Typically called by operators during setup, before any tuples are stored.
+service Schemas {
+  // Register a new schema or overwrite an existing one.
+  //
+  // The definition must be a valid JSON string. The server parses and caches
+  // the compiled schema for fast validation on PutTuple.
+  //
+  // Errors:
+  //   INVALID_ARGUMENT — definition is not valid JSON.
+  rpc RegisterSchema(RegisterSchemaRequest) returns (Empty);
+
+  // Retrieve a schema by name.
+  //
+  // Errors:
+  //   NOT_FOUND — no schema with that name exists.
+  rpc GetSchema(GetSchemaRequest) returns (SchemaResponse);
+
+  // List all registered schemas.
+  //
+  // Returns an empty list (not an error) when no schemas are registered.
+  rpc ListSchemas(Empty) returns (ListSchemasResponse);
+}
+
+// Request to register (or overwrite) a named schema.
+message RegisterSchemaRequest {
+  // Unique name for the schema (e.g. "order", "payment").
+  string name = 1;
+
+  // JSON Schema definition serialized as a JSON string.
+  // Must be a valid JSON object conforming to JSON Schema draft 2020-12.
+  string definition = 2;
+}
+
+// Request to retrieve a single schema by name.
+message GetSchemaRequest {
+  // Name of the schema to retrieve.
+  string name = 1;
+}
+
+// A single schema record.
+message SchemaResponse {
+  // The schema's unique name.
+  string name = 1;
+
+  // The JSON Schema definition as a JSON string.
+  string definition = 2;
+}
+
+// Response containing all registered schemas.
+message ListSchemasResponse {
+  // All registered schemas, in no guaranteed order.
+  repeated SchemaResponse schemas = 1;
+}

@@ -1,0 +1,33 @@
+// Common types shared across all tuples API services.
+//
+// This file defines the Health service (version check) and foundational message
+// types (Empty, VersionResponse) that are imported by every other proto file.
+//
+// Design note: keeping shared types in a single file avoids circular imports
+// and gives every service access to Empty without re-declaring it.
+
+syntax = "proto3";
+
+package tuples;
+
+// Health check service.
+//
+// Provides a single RPC for clients to verify connectivity and discover the
+// server version. Called by the CLI `version` subcommand and the desktop UI
+// status bar.
+service Health {
+  // Returns the server's semantic version string (e.g. "0.1.0").
+  //
+  // This is a lightweight connectivity check — no authentication or
+  // server-side state is required.
+  rpc GetVersion(Empty) returns (VersionResponse);
+}
+
+// Marker message used when an RPC has no meaningful request or response payload.
+message Empty {}
+
+// Server version information returned by Health.GetVersion.
+message VersionResponse {
+  // Semantic version string from the server's Cargo.toml (e.g. "0.1.0").
+  string version = 1;
+}

@@ -3,7 +3,9 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use proto::tuples::{
-    tuples_client::TuplesClient, Empty, GetPlaybookRequest, GetSchemaRequest, GetTupleRequest,
+    health_client::HealthClient, schemas_client::SchemasClient,
+    tuple_store_client::TupleStoreClient, playbooks_client::PlaybooksClient,
+    Empty, GetPlaybookRequest, GetSchemaRequest, GetTupleRequest,
     MatchTupleRequest, PutTupleRequest, RegisterFilterRequest, RegisterPlaybookRequest,
     RegisterSchemaRequest, WatchTriggersRequest,
 };
@@ -132,13 +134,13 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Version => {
-            let mut client = TuplesClient::connect(SERVER_ADDR).await?;
+            let mut client = HealthClient::connect(SERVER_ADDR).await?;
             let response = client.get_version(Empty {}).await?;
             println!("{}", response.into_inner().version);
         }
 
         Command::Schema { action } => {
-            let mut client = TuplesClient::connect(SERVER_ADDR).await?;
+            let mut client = SchemasClient::connect(SERVER_ADDR).await?;
             match action {
                 SchemaAction::Register { name, file } => {
                     let definition = std::fs::read_to_string(&file)
@@ -174,7 +176,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Filter { action } => {
-            let mut client = TuplesClient::connect(SERVER_ADDR).await?;
+            let mut client = TupleStoreClient::connect(SERVER_ADDR).await?;
             match action {
                 FilterAction::Register { file } => {
                     let definition = std::fs::read_to_string(&file)
@@ -215,7 +217,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Tuple { action } => {
-            let mut client = TuplesClient::connect(SERVER_ADDR).await?;
+            let mut client = TupleStoreClient::connect(SERVER_ADDR).await?;
             match action {
                 TupleAction::Put { tuple_type, trace_id, file } => {
                     let data = std::fs::read_to_string(&file)
@@ -251,7 +253,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Playbook { action } => {
-            let mut client = TuplesClient::connect(SERVER_ADDR).await?;
+            let mut client = PlaybooksClient::connect(SERVER_ADDR).await?;
             match action {
                 PlaybookAction::Register { file } => {
                     let definition = std::fs::read_to_string(&file)
@@ -287,7 +289,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Trigger { action } => {
-            let mut client = TuplesClient::connect(SERVER_ADDR).await?;
+            let mut client = PlaybooksClient::connect(SERVER_ADDR).await?;
             match action {
                 TriggerAction::Watch { playbook } => {
                     let req = WatchTriggersRequest {

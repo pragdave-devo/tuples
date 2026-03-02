@@ -16,15 +16,21 @@ use tonic::{transport::Server, Request, Response, Status};
 use uuid::Uuid;
 
 use proto::tuples::{
-    tuples_server::{Tuples, TuplesServer},
-    AgentCompletedRequest, AgentLifecycleRequest, AgentResponse, Empty, FilterResponse,
-    GetAgentRequest, GetPlaybookRequest, GetRunRequest, GetSchemaRequest, GetTupleRequest,
-    ListAgentsResponse, ListFiltersResponse, ListPlaybooksResponse, ListRunsResponse,
-    ListSchemasResponse, MatchTupleRequest, MatchTupleResponse, PlaybookResponse, PutTupleRequest,
-    PutTupleResponse, RegisterAgentRequest, RegisterFilterRequest, RegisterPlaybookRequest,
-    RegisterSchemaRequest, RunPlaybookRequest, RunPlaybookResponse, RunResponse, SchemaResponse,
-    TriggerFiredEvent, TupleResponse, VersionResponse, WatchAgentDispatchRequest,
-    WatchRunRequest, WatchTriggersRequest, AgentDispatchedEvent, RunEvent,
+    health_server::{Health, HealthServer},
+    schemas_server::{Schemas, SchemasServer},
+    tuple_store_server::{TupleStore as TupleStoreSvc, TupleStoreServer},
+    playbooks_server::{Playbooks, PlaybooksServer},
+    agents_server::{Agents, AgentsServer},
+    runs_server::{Runs, RunsServer},
+    AgentCompletedRequest, AgentDispatchedEvent, AgentLifecycleRequest, AgentResponse, Empty,
+    FilterResponse, GetAgentRequest, GetPlaybookRequest, GetRunRequest, GetSchemaRequest,
+    GetTupleRequest, ListAgentsResponse, ListFiltersResponse, ListPlaybooksResponse,
+    ListRunsResponse, ListSchemasResponse, MatchTupleRequest, MatchTupleResponse,
+    PlaybookResponse, PutTupleRequest, PutTupleResponse, RegisterAgentRequest,
+    RegisterFilterRequest, RegisterPlaybookRequest, RegisterSchemaRequest, RunEvent,
+    RunPlaybookRequest, RunPlaybookResponse, RunResponse, SchemaResponse, TriggerFiredEvent,
+    TupleResponse, VersionResponse, WatchAgentDispatchRequest, WatchRunRequest,
+    WatchTriggersRequest,
 };
 use batch_writer::BatchWriter;
 use executor::Executor;
@@ -36,9 +42,9 @@ use tuples_core::{
     tuple::Tuple,
 };
 use tuples_storage::{
-    FilterStore, InMemoryAgentStore, InMemoryFilterStore, InMemoryPlaybookStore,
+    AgentStore, FilterStore, InMemoryAgentStore, InMemoryFilterStore, InMemoryPlaybookStore,
     InMemoryRunStore, InMemorySchemaStore, InMemoryTupleStore, PlaybookStore, RunStore,
-    SchemaStore, TupleStore, AgentStore,
+    SchemaStore, TupleStore,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -161,15 +167,22 @@ impl TuplesService {
     }
 }
 
+// ── Health service ──────────────────────────────────────────────────────────
+
 #[tonic::async_trait]
-impl Tuples for TuplesService {
+impl Health for TuplesService {
     async fn get_version(
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<VersionResponse>, Status> {
         Ok(Response::new(VersionResponse { version: VERSION.to_string() }))
     }
+}
 
+// ── Schemas service ─────────────────────────────────────────────────────────
+
+#[tonic::async_trait]
+impl Schemas for TuplesService {
     async fn register_schema(
         &self,
         request: Request<RegisterSchemaRequest>,
@@ -223,7 +236,12 @@ impl Tuples for TuplesService {
             .collect();
         Ok(Response::new(ListSchemasResponse { schemas }))
     }
+}
 
+// ── TupleStore service ──────────────────────────────────────────────────────
+
+#[tonic::async_trait]
+impl TupleStoreSvc for TuplesService {
     async fn put_tuple(
         &self,
         request: Request<PutTupleRequest>,
@@ -335,7 +353,12 @@ impl Tuples for TuplesService {
             .map_err(|e| Status::internal(e.to_string()))?;
         Ok(Response::new(MatchTupleResponse { filter_ids }))
     }
+}
 
+// ── Playbooks service ───────────────────────────────────────────────────────
+
+#[tonic::async_trait]
+impl Playbooks for TuplesService {
     async fn register_playbook(
         &self,
         request: Request<RegisterPlaybookRequest>,
@@ -482,9 +505,12 @@ impl Tuples for TuplesService {
         });
         Ok(Response::new(Box::pin(stream)))
     }
+}
 
-    // ── Agent management ────────────────────────────────────────────────────
+// ── Agents service ──────────────────────────────────────────────────────────
 
+#[tonic::async_trait]
+impl Agents for TuplesService {
     async fn register_agent(
         &self,
         request: Request<RegisterAgentRequest>,
@@ -540,9 +566,12 @@ impl Tuples for TuplesService {
             .collect();
         Ok(Response::new(ListAgentsResponse { agents }))
     }
+}
 
-    // ── Playbook execution ───────────────────────────────────────────────────
+// ── Runs service ────────────────────────────────────────────────────────────
 
+#[tonic::async_trait]
+impl Runs for TuplesService {
     async fn run_playbook(
         &self,
         request: Request<RunPlaybookRequest>,
@@ -585,8 +614,6 @@ impl Tuples for TuplesService {
         Ok(Response::new(ListRunsResponse { runs }))
     }
 
-    // ── Agent lifecycle callbacks ────────────────────────────────────────────
-
     async fn notify_agent_started(
         &self,
         request: Request<AgentLifecycleRequest>,
@@ -606,8 +633,6 @@ impl Tuples for TuplesService {
             .await?;
         Ok(Response::new(Empty {}))
     }
-
-    // ── Streaming subscriptions ─────────────────────────────────────────────
 
     type WatchRunStream =
         Pin<Box<dyn tokio_stream::Stream<Item = Result<RunEvent, Status>> + Send>>;
@@ -681,8 +706,14 @@ async fn main() -> Result<()> {
 
     println!("tuplesd {VERSION} listening on {addr}");
 
+    let svc = Arc::new(service);
     Server::builder()
-        .add_service(TuplesServer::new(service))
+        .add_service(HealthServer::from_arc(svc.clone()))
+        .add_service(SchemasServer::from_arc(svc.clone()))
+        .add_service(TupleStoreServer::from_arc(svc.clone()))
+        .add_service(PlaybooksServer::from_arc(svc.clone()))
+        .add_service(AgentsServer::from_arc(svc.clone()))
+        .add_service(RunsServer::from_arc(svc))
         .serve_with_shutdown(addr, shutdown_signal())
         .await?;
 

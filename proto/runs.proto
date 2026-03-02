@@ -1,0 +1,221 @@
+// Playbook execution and run lifecycle API.
+//
+// This service manages the full lifecycle of playbook runs: starting a run,
+// tracking agent dispatch/start/complete events, and streaming real-time
+// updates to the UI. Agents call back into this service to report their
+// progress.
+//
+// Run lifecycle:
+//   1. RunPlaybook — creates a PlaybookRun, dispatches the conductor agent
+//   2. WatchAgentDispatch — agent receives dispatch event, begins work
+//   3. NotifyAgentStarted — agent reports it has started
+//   4. NotifyAgentCompleted — agent reports success/failure
+//   5. When all agents complete, run status transitions to Completed/Failed
+//   6. WatchRun — UI streams RunEvents for real-time progress display
+//
+// Design note: run state is currently in-memory only. FDB-backed RunStore
+// is deferred to a future stage.
+
+syntax = "proto3";
+
+package tuples;
+
+import "common.proto";
+
+// Playbook execution and run management service.
+//
+// Handles run creation, agent lifecycle callbacks, and real-time event
+// streaming for both agents and the UI.
+service Runs {
+  // Start a new playbook run.
+  //
+  // Validates the playbook exists, validates params against the conductor
+  // agent's schema, creates a PlaybookRun record, and dispatches the
+  // conductor agent.
+  //
+  // Errors:
+  //   NOT_FOUND — playbook or conductor agent not found.
+  //   INVALID_ARGUMENT — params fail schema validation.
+  rpc RunPlaybook(RunPlaybookRequest) returns (RunPlaybookResponse);
+
+  // Retrieve the current state of a run.
+  //
+  // Errors:
+  //   NOT_FOUND — no run with that trace_id exists.
+  rpc GetRun(GetRunRequest) returns (RunResponse);
+
+  // List all runs (both active and completed).
+  //
+  // Returns an empty list when no runs exist.
+  rpc ListRuns(Empty) returns (ListRunsResponse);
+
+  // Agent lifecycle callback: agent reports it has started work.
+  //
+  // Called by agents after receiving a dispatch event and beginning execution.
+  //
+  // Errors:
+  //   NOT_FOUND — unknown trace_id or agent_run_id.
+  rpc NotifyAgentStarted(AgentLifecycleRequest) returns (Empty);
+
+  // Agent lifecycle callback: agent reports it has completed.
+  //
+  // Called by agents when they finish (success or failure). If all agents
+  // in the run have completed, the run transitions to Completed or Failed.
+  //
+  // Errors:
+  //   NOT_FOUND — unknown trace_id or agent_run_id.
+  rpc NotifyAgentCompleted(AgentCompletedRequest) returns (Empty);
+
+  // Stream run lifecycle events in real time (server-streaming).
+  //
+  // Emits RunEvent messages as agents are dispatched, started, and completed,
+  // and when the overall run completes. The stream stays open until the client
+  // disconnects or the run finishes. Lagged receivers silently skip.
+  rpc WatchRun(WatchRunRequest) returns (stream RunEvent);
+
+  // Stream agent dispatch events for a specific agent (server-streaming).
+  //
+  // Agents subscribe to this RPC to receive work assignments. Only events
+  // matching the requested agent_name are delivered. The stream stays open
+  // until the client disconnects. Lagged receivers silently skip.
+  rpc WatchAgentDispatch(WatchAgentDispatchRequest) returns (stream AgentDispatchedEvent);
+}
+
+// Request to start a new playbook run.
+message RunPlaybookRequest {
+  // Name of the playbook to execute.
+  string playbook_name = 1;
+
+  // JSON object matching the conductor agent's schema.
+  string params        = 2;
+}
+
+// Response after successfully starting a playbook run.
+message RunPlaybookResponse {
+  // Unique trace ID for the new run (UUID v7).
+  string trace_id = 1;
+}
+
+// Request to retrieve a single run.
+message GetRunRequest {
+  // Trace ID of the run to retrieve.
+  string trace_id = 1;
+}
+
+// A single run record.
+message RunResponse {
+  // Unique trace ID for the run.
+  string trace_id      = 1;
+
+  // Name of the playbook being executed.
+  string playbook_name = 2;
+
+  // Timestamp when the run started (RFC 3339).
+  string started_at    = 3;
+
+  // Serialized RunStatus: "Running", "Completed", or "Failed: <reason>".
+  string status        = 4;
+}
+
+// Response containing all runs.
+message ListRunsResponse {
+  // All runs, in no guaranteed order.
+  repeated RunResponse runs = 1;
+}
+
+// Request to subscribe to lifecycle events for a specific run.
+message WatchRunRequest {
+  // Trace ID of the run to watch.
+  string trace_id = 1;
+}
+
+// A run lifecycle event, emitted on WatchRun streams.
+//
+// Exactly one of the oneof event fields will be set per message.
+message RunEvent {
+  // Trace ID of the run this event belongs to.
+  string trace_id = 1;
+
+  oneof event {
+    // An agent was dispatched (assigned work).
+    AgentDispatchedEvent agent_dispatched = 2;
+
+    // An agent reported it has started.
+    AgentStartedEvent    agent_started    = 3;
+
+    // An agent reported completion (success or failure).
+    AgentCompletedEvent  agent_completed  = 4;
+
+    // The overall run completed.
+    RunCompletedEvent    run_completed    = 5;
+  }
+}
+
+// Event: an agent was dispatched to begin work.
+message AgentDispatchedEvent {
+  // Unique ID for this agent run instance.
+  string agent_run_id = 1;
+
+  // Name of the dispatched agent.
+  string agent_name   = 2;
+
+  // JSON object of resolved agent parameters.
+  string params       = 3;
+}
+
+// Event: an agent has started executing.
+message AgentStartedEvent {
+  // ID of the agent run that started.
+  string agent_run_id = 1;
+}
+
+// Event: an agent has completed.
+message AgentCompletedEvent {
+  // ID of the agent run that completed.
+  string agent_run_id = 1;
+
+  // Whether the agent succeeded.
+  bool   success      = 2;
+
+  // Error message if the agent failed; empty on success.
+  string error        = 3;
+}
+
+// Event: the overall playbook run completed.
+message RunCompletedEvent {
+  // Whether the run succeeded (all agents succeeded).
+  bool   success = 1;
+
+  // Error message if the run failed; empty on success.
+  string error   = 2;
+}
+
+// Request to subscribe to dispatch events for a specific agent.
+message WatchAgentDispatchRequest {
+  // Only receive dispatch events for this agent name.
+  string agent_name = 1;
+}
+
+// Agent lifecycle callback: agent reports it has started.
+message AgentLifecycleRequest {
+  // Trace ID of the parent run.
+  string trace_id     = 1;
+
+  // ID of the agent run instance.
+  string agent_run_id = 2;
+}
+
+// Agent lifecycle callback: agent reports completion.
+message AgentCompletedRequest {
+  // Trace ID of the parent run.
+  string trace_id     = 1;
+
+  // ID of the agent run instance.
+  string agent_run_id = 2;
+
+  // Whether the agent succeeded.
+  bool   success      = 3;
+
+  // Error message if the agent failed; empty on success.
+  string error        = 4;
+}

@@ -3,10 +3,13 @@
 use anyhow::Result;
 use clap::Parser;
 use proto::tuples::{
-    tuples_client::TuplesClient, PutTupleRequest, RegisterPlaybookRequest, RegisterSchemaRequest,
+    schemas_client::SchemasClient, playbooks_client::PlaybooksClient,
+    tuple_store_client::TupleStoreClient, PutTupleRequest, RegisterPlaybookRequest,
+    RegisterSchemaRequest,
 };
 use rand::Rng;
 use std::time::{Duration, Instant};
+use tonic::transport::Channel;
 
 const DEFAULT_SERVER: &str = "http://[::1]:50051";
 
@@ -34,7 +37,8 @@ struct Args {
 type Pool = Vec<(String, String)>;
 
 async fn setup(
-    client: &mut TuplesClient<tonic::transport::Channel>,
+    schemas: &mut SchemasClient<Channel>,
+    playbooks: &mut PlaybooksClient<Channel>,
     args: &Args,
     run_id: &str,
 ) -> Result<(Pool, usize)> {
@@ -43,7 +47,7 @@ async fn setup(
 
     for i in 0..args.tuple_count {
         let name = format!("perf_{run_id}_type_{i}");
-        client
+        schemas
             .register_schema(RegisterSchemaRequest {
                 name,
                 definition: schema_def.to_string(),
@@ -93,7 +97,7 @@ async fn setup(
         "triggers": triggers
     });
 
-    client
+    playbooks
         .register_playbook(RegisterPlaybookRequest {
             definition: serde_json::to_string(&playbook)?,
         })
@@ -111,7 +115,7 @@ async fn setup(
 }
 
 async fn timed_run(
-    client: &mut TuplesClient<tonic::transport::Channel>,
+    client: &mut TupleStoreClient<Channel>,
     pool: &Pool,
     run_size: usize,
     guaranteed: bool,
@@ -178,12 +182,15 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     let run_id = format!("{:08x}", rand::random::<u32>());
-    let mut client = TuplesClient::connect(args.server.clone()).await?;
+    let channel = Channel::from_static(DEFAULT_SERVER).connect().await?;
+    let mut schemas = SchemasClient::new(channel.clone());
+    let mut playbooks = PlaybooksClient::new(channel.clone());
+    let mut tuples = TupleStoreClient::new(channel);
 
-    let (pool, matching_count) = setup(&mut client, &args, &run_id).await?;
+    let (pool, matching_count) = setup(&mut schemas, &mut playbooks, &args, &run_id).await?;
 
     let start = Instant::now();
-    let latencies = timed_run(&mut client, &pool, args.run_size, args.guaranteed).await?;
+    let latencies = timed_run(&mut tuples, &pool, args.run_size, args.guaranteed).await?;
     let total = start.elapsed();
 
     print_stats(latencies, total, &args, matching_count);

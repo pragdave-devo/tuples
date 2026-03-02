@@ -1,0 +1,21 @@
+module-title = "Tuples API documentation"
+
+# Specifies the file which contains the content to display on the main page above the package list.
+# Default value: ""
+main-page-content-file = "../api-docs/_util/intro.md"
+
+output-dir = "../api-docs"
+
+footer-content = "© 2026 Devo, Inc"
+
+repository-type = "github"
+repository-url = "https://github.com/pragdave-devo/tuples"
+repository-branch = "main"
+repository-dir = "proto"
+
+ignore-comments-after = ["@exclude"]
+ignore-comment-lines-containing = ["buf:lint"]
+
+hidden-packages = []
+
+

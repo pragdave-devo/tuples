@@ -13,3 +13,8 @@ docs:
     sabledocs
     rm descriptor.pb sabledocs.toml
 
+# Rebuild docs and trigger a GitHub Pages deployment
+pages: docs
+    @echo "Docs regenerated in api-docs/. Push to main to deploy via GitHub Actions."
+    @echo "Or run: gh workflow run docs.yml to deploy manually."
+

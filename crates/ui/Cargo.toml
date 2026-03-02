@@ -8,10 +8,12 @@ name = "tuples-ui"
 path = "src/main.rs"
 
 [dependencies]
-dioxus      = { version = "0.6", features = ["desktop"] }
-proto       = { workspace = true }
-tonic       = { workspace = true }
-tokio       = { workspace = true }
-anyhow      = { workspace = true }
-tokio-stream = { workspace = true }
-serde_json   = { workspace = true }
+dioxus          = "0.7"
+dioxus-liveview = { version = "0.7", features = ["axum"] }
+axum           = "0.8"
+proto          = { workspace = true }
+tonic          = { workspace = true }
+tokio          = { workspace = true }
+anyhow         = { workspace = true }
+tokio-stream   = { workspace = true }
+serde_json     = { workspace = true }

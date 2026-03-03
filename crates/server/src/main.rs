@@ -304,6 +304,19 @@ impl Health for TuplesService {
     ) -> Result<Response<VersionResponse>, Status> {
         Ok(Response::new(VersionResponse { version: VERSION.to_string() }))
     }
+
+    async fn clear_all(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<Empty>, Status> {
+        self.filters.lock().await.clear().await.map_err(|e| Status::internal(e.to_string()))?;
+        self.schemas.lock().await.clear().await.map_err(|e| Status::internal(e.to_string()))?;
+        self.tuples.clear().await.map_err(|e| Status::internal(e.to_string()))?;
+        self.playbooks.lock().await.clear().await.map_err(|e| Status::internal(e.to_string()))?;
+        self.agents.lock().await.clear().await.map_err(|e| Status::internal(e.to_string()))?;
+        self.runs.lock().await.clear().await.map_err(|e| Status::internal(e.to_string()))?;
+        Ok(Response::new(Empty {}))
+    }
 }
 
 // ── Schemas service ─────────────────────────────────────────────────────────

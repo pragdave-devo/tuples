@@ -165,4 +165,8 @@ impl RunStore for DynamoRunStore {
             .count();
         Ok(count)
     }
+
+    async fn clear(&mut self) -> Result<()> {
+        anyhow::bail!("clear not implemented for DynamoDB backend")
+    }
 }

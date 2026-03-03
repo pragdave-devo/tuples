@@ -12,6 +12,8 @@ pub trait SchemaStore: Send + Sync {
     async fn get(&self, name: &str) -> Result<Option<Schema>>;
     /// List all registered schemas, sorted by name.
     async fn list(&self) -> Result<Vec<Schema>>;
+    /// Remove all schemas.
+    async fn clear(&mut self) -> Result<()>;
 }
 
 /// In-memory schema store (for testing and early stages).
@@ -35,6 +37,11 @@ impl SchemaStore for InMemorySchemaStore {
         let mut schemas: Vec<Schema> = self.schemas.values().cloned().collect();
         schemas.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(schemas)
+    }
+
+    async fn clear(&mut self) -> Result<()> {
+        self.schemas.clear();
+        Ok(())
     }
 }
 

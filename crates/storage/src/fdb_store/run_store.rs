@@ -182,6 +182,10 @@ impl RunStore for FdbRunStore {
             .count();
         Ok(count)
     }
+
+    async fn clear(&mut self) -> Result<()> {
+        anyhow::bail!("clear not implemented for FDB backend")
+    }
 }
 
 #[cfg(feature = "fdb")]

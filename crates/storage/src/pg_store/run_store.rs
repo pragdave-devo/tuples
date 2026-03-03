@@ -124,4 +124,8 @@ impl RunStore for PgRunStore {
         let count: usize = row.0.try_into().map_err(|_| anyhow!("negative count"))?;
         Ok(count)
     }
+
+    async fn clear(&mut self) -> Result<()> {
+        anyhow::bail!("clear not implemented for Postgres backend")
+    }
 }

@@ -15,6 +15,8 @@ pub trait FilterStore: Send + Sync {
     async fn list(&self) -> Result<Vec<Filter>>;
     /// Return IDs of all filters that match `data`, sorted.
     async fn match_data(&self, data: &Value) -> Result<Vec<String>>;
+    /// Remove all filters.
+    async fn clear(&mut self) -> Result<()>;
 }
 
 /// In-memory filter store with a discrimination tree.
@@ -121,6 +123,13 @@ impl FilterStore for InMemoryFilterStore {
             .collect();
         matched.sort();
         Ok(matched)
+    }
+
+    async fn clear(&mut self) -> Result<()> {
+        self.filters.clear();
+        self.exact_index.clear();
+        self.no_exact.clear();
+        Ok(())
     }
 }
 

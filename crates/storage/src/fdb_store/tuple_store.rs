@@ -71,6 +71,10 @@ impl TupleStore for FdbTupleStore {
             }
         }
     }
+
+    async fn clear(&self) -> Result<()> {
+        anyhow::bail!("clear not implemented for FDB backend")
+    }
 }
 
 #[cfg(feature = "fdb")]

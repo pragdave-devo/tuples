@@ -72,4 +72,8 @@ impl FilterStore for DynamoFilterStore {
     async fn match_data(&self, data: &Value) -> Result<Vec<String>> {
         self.cache.match_data(data).await
     }
+
+    async fn clear(&mut self) -> Result<()> {
+        anyhow::bail!("clear not implemented for DynamoDB backend")
+    }
 }

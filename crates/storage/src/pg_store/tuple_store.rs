@@ -57,4 +57,8 @@ impl TupleStore for PgTupleStore {
         tx.commit().await?;
         Ok(())
     }
+
+    async fn clear(&self) -> Result<()> {
+        anyhow::bail!("clear not implemented for Postgres backend")
+    }
 }

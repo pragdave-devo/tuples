@@ -50,4 +50,8 @@ impl SchemaStore for PgSchemaStore {
             .map(|(data,)| Ok(serde_json::from_value(data)?))
             .collect()
     }
+
+    async fn clear(&mut self) -> Result<()> {
+        anyhow::bail!("clear not implemented for Postgres backend")
+    }
 }

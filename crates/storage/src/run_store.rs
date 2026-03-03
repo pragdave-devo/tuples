@@ -15,6 +15,8 @@ pub trait RunStore: Send + Sync {
     async fn update_agent_status(&mut self, id: &str, status: AgentStatus) -> Result<()>;
     /// Count of agent runs in Dispatched or Running state for the given trace_id.
     async fn active_agent_count(&self, trace_id: &str) -> Result<usize>;
+    /// Remove all runs and agent runs.
+    async fn clear(&mut self) -> Result<()>;
 }
 
 /// In-memory run store (run state is transient; FDB backend deferred).
@@ -80,6 +82,12 @@ impl RunStore for InMemoryRunStore {
             .filter(|r| matches!(r.status, AgentStatus::Dispatched | AgentStatus::Running))
             .count();
         Ok(count)
+    }
+
+    async fn clear(&mut self) -> Result<()> {
+        self.runs.clear();
+        self.agent_runs.clear();
+        Ok(())
     }
 }
 

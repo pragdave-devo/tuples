@@ -67,4 +67,8 @@ impl AgentStore for DynamoAgentStore {
         items.sort_by(|a: &Agent, b: &Agent| a.name.cmp(&b.name));
         Ok(items)
     }
+
+    async fn clear(&mut self) -> Result<()> {
+        anyhow::bail!("clear not implemented for DynamoDB backend")
+    }
 }

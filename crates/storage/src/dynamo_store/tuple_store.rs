@@ -81,4 +81,8 @@ impl TupleStore for DynamoTupleStore {
         }
         Ok(())
     }
+
+    async fn clear(&self) -> Result<()> {
+        anyhow::bail!("clear not implemented for DynamoDB backend")
+    }
 }

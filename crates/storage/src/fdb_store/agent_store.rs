@@ -73,6 +73,10 @@ impl AgentStore for FdbAgentStore {
         agents.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(agents)
     }
+
+    async fn clear(&mut self) -> Result<()> {
+        anyhow::bail!("clear not implemented for FDB backend")
+    }
 }
 
 #[cfg(feature = "fdb")]

@@ -14,6 +14,8 @@ pub trait PlaybookStore: Send + Sync {
     async fn list(&self) -> Result<Vec<Playbook>>;
     /// All (playbook_name, trigger) pairs across every playbook.
     async fn all_triggers(&self) -> Result<Vec<(String, Trigger)>>;
+    /// Remove all playbooks.
+    async fn clear(&mut self) -> Result<()>;
 }
 
 /// In-memory playbook store.
@@ -47,6 +49,11 @@ impl PlaybookStore for InMemoryPlaybookStore {
             }
         }
         Ok(result)
+    }
+
+    async fn clear(&mut self) -> Result<()> {
+        self.playbooks.clear();
+        Ok(())
     }
 }
 

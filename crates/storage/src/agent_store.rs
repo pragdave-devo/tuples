@@ -9,6 +9,8 @@ pub trait AgentStore: Send + Sync {
     async fn register(&mut self, agent: Agent) -> Result<()>;
     async fn get(&self, name: &str) -> Result<Option<Agent>>;
     async fn list(&self) -> Result<Vec<Agent>>;
+    /// Remove all agents.
+    async fn clear(&mut self) -> Result<()>;
 }
 
 /// In-memory agent store.
@@ -30,6 +32,11 @@ impl AgentStore for InMemoryAgentStore {
         let mut agents: Vec<Agent> = self.0.values().cloned().collect();
         agents.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(agents)
+    }
+
+    async fn clear(&mut self) -> Result<()> {
+        self.0.clear();
+        Ok(())
     }
 }
 

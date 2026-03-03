@@ -78,6 +78,10 @@ impl PlaybookStore for FdbPlaybookStore {
     async fn all_triggers(&self) -> Result<Vec<(String, Trigger)>> {
         self.cache.all_triggers().await
     }
+
+    async fn clear(&mut self) -> Result<()> {
+        anyhow::bail!("clear not implemented for FDB backend")
+    }
 }
 
 #[cfg(feature = "fdb")]

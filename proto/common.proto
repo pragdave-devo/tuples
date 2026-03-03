@@ -21,6 +21,11 @@ service Health {
   // This is a lightweight connectivity check — no authentication or
   // server-side state is required.
   rpc GetVersion(Empty) returns (VersionResponse);
+
+  // Delete all data from every store (filters, schemas, tuples, playbooks,
+  // agents, runs). Intended for benchmarks and test harnesses that need a
+  // clean slate before each run.
+  rpc ClearAll(Empty) returns (Empty);
 }
 
 // Marker message used when an RPC has no meaningful request or response payload.

@@ -18,6 +18,8 @@ pub trait TupleStore: Send + Sync {
         }
         Ok(())
     }
+    /// Remove all tuples.
+    async fn clear(&self) -> Result<()>;
 }
 
 /// In-memory tuple store (for testing and early stages).
@@ -35,6 +37,11 @@ impl TupleStore for InMemoryTupleStore {
 
     async fn get(&self, uuid7: &str) -> Result<Option<Tuple>> {
         Ok(self.tuples.read().unwrap().get(uuid7).cloned())
+    }
+
+    async fn clear(&self) -> Result<()> {
+        self.tuples.write().unwrap().clear();
+        Ok(())
     }
 }
 

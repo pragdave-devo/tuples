@@ -73,6 +73,10 @@ impl SchemaStore for FdbSchemaStore {
         schemas.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(schemas)
     }
+
+    async fn clear(&mut self) -> Result<()> {
+        anyhow::bail!("clear not implemented for FDB backend")
+    }
 }
 
 #[cfg(feature = "fdb")]

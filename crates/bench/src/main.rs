@@ -160,33 +160,41 @@ async fn setup(
             .await?;
     }
 
-    // Register agent.
-    agents_client
-        .register_agent(RegisterAgentRequest {
-            name: "perf_agent".to_string(),
-            description: "Perf test agent".to_string(),
-            schema: schema_defs[0].name.clone(),
-        })
-        .await?;
+    let matching_count = std::cmp::min(
+        std::cmp::max(1, (args.trigger_count as f64 * 0.2).round() as usize),
+        args.trigger_count,
+    );
+    let miss_count = args.trigger_count - matching_count;
 
-    // Build triggers.
-    let mut triggers = Vec::with_capacity(args.triggers);
-    for i in 0..args.triggers {
-        let schema_idx = if i < args.schemas {
-            i
-        } else {
-            rand::thread_rng().gen_range(0..args.schemas)
-        };
-        let type_name = &schema_defs[schema_idx].name;
+    // Register schemas for non-matching triggers so validation passes.
+    for j in 0..miss_count {
+        let name = format!("perf_{run_id}_miss_{j}");
+        schemas
+            .register_schema(RegisterSchemaRequest {
+                name,
+                definition: schema_def.to_string(),
+            })
+            .await?;
+    }
+
+    let agents = vec!["perf_agent"];
+
+    let mut triggers = Vec::with_capacity(args.trigger_count);
+    for i in 0..matching_count {
+        let type_name = format!("perf_{run_id}_type_{}", i % args.tuple_count);
         triggers.push(serde_json::json!({
             "id": format!("t_{i}"),
-            "match": {
-                "tuple_type": type_name,
-                "filter": {
-                    "id": format!("f_{i}"),
-                    "exact": { "status": "fire" }
-                }
-            },
+            "match": { "tuple_type": type_name },
+            "execution": {
+                "agent": "perf_agent",
+                "params": {}
+            }
+        }));
+    }
+    for j in 0..(args.trigger_count - matching_count) {
+        triggers.push(serde_json::json!({
+            "id": format!("t_miss_{j}"),
+            "match": { "tuple_type": format!("perf_{run_id}_miss_{j}") },
             "execution": {
                 "agent": "perf_agent",
                 "params": {}

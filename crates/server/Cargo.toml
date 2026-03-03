@@ -9,6 +9,8 @@ path = "src/main.rs"
 
 [features]
 fdb = ["tuples-storage/fdb", "dep:foundationdb"]
+postgres = ["tuples-storage/postgres", "dep:sqlx"]
+dynamodb = ["tuples-storage/dynamodb"]
 
 [dependencies]
 proto = { workspace = true }
@@ -23,3 +25,4 @@ chrono = { workspace = true }
 clap = { workspace = true }
 tokio-stream = { workspace = true }
 foundationdb = { workspace = true, optional = true }
+sqlx = { workspace = true, optional = true }

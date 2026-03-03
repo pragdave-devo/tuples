@@ -17,4 +17,21 @@ pub use tuple_store::{InMemoryTupleStore, TupleStore};
 #[cfg(feature = "fdb")]
 pub mod fdb_store;
 #[cfg(feature = "fdb")]
-pub use fdb_store::{FdbFilterStore, FdbPlaybookStore, FdbSchemaStore, FdbTupleStore};
+pub use fdb_store::{
+    FdbAgentStore, FdbFilterStore, FdbPlaybookStore, FdbRunStore, FdbSchemaStore, FdbTupleStore,
+};
+
+#[cfg(feature = "postgres")]
+pub mod pg_store;
+#[cfg(feature = "postgres")]
+pub use pg_store::{
+    PgAgentStore, PgFilterStore, PgPlaybookStore, PgRunStore, PgSchemaStore, PgTupleStore,
+};
+
+#[cfg(feature = "dynamodb")]
+pub mod dynamo_store;
+#[cfg(feature = "dynamodb")]
+pub use dynamo_store::{
+    DynamoAgentStore, DynamoFilterStore, DynamoPlaybookStore, DynamoRunStore, DynamoSchemaStore,
+    DynamoTupleStore,
+};

@@ -51,11 +51,32 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const ADDR: &str = "[::1]:50051";
 const BROADCAST_CAPACITY: usize = 256;
 
+#[derive(clap::ValueEnum, Clone, Default)]
+enum Backend {
+    #[default]
+    Memory,
+    #[cfg(feature = "fdb")]
+    Fdb,
+    #[cfg(feature = "postgres")]
+    Postgres,
+    #[cfg(feature = "dynamodb")]
+    Dynamodb,
+}
+
 #[derive(Parser)]
 struct Args {
-    #[cfg(feature = "fdb")]
-    #[arg(long)]
-    fdb: bool,
+    #[arg(long, default_value = "memory")]
+    backend: Backend,
+
+    /// Postgres connection string (required when --backend postgres)
+    #[cfg(feature = "postgres")]
+    #[arg(long, env = "DATABASE_URL")]
+    database_url: Option<String>,
+
+    /// DynamoDB table prefix (optional, defaults to "tuples_")
+    #[cfg(feature = "dynamodb")]
+    #[arg(long, default_value = "tuples_")]
+    dynamo_prefix: String,
 }
 
 struct TuplesService {
@@ -118,19 +139,125 @@ impl TuplesService {
     #[cfg(feature = "fdb")]
     async fn new_fdb(db: Arc<foundationdb::Database>) -> Result<Self> {
         use tuples_storage::{
-            FdbFilterStore, FdbPlaybookStore, FdbSchemaStore, FdbTupleStore,
+            FdbAgentStore, FdbFilterStore, FdbPlaybookStore, FdbRunStore, FdbSchemaStore,
+            FdbTupleStore,
         };
         let filters = FdbFilterStore::load(db.clone()).await?;
         let fdb_playbooks = FdbPlaybookStore::load(db.clone()).await?;
         let tuples: Arc<dyn TupleStore> = Arc::new(FdbTupleStore::new(db.clone()));
-        let playbooks: Arc<Mutex<dyn PlaybookStore>> =
-            Arc::new(Mutex::new(fdb_playbooks));
+        let playbooks: Arc<Mutex<dyn PlaybookStore>> = Arc::new(Mutex::new(fdb_playbooks));
         let agents: Arc<Mutex<dyn AgentStore>> =
-            Arc::new(Mutex::new(InMemoryAgentStore::default()));
+            Arc::new(Mutex::new(FdbAgentStore::new(db.clone())));
         let runs: Arc<Mutex<dyn RunStore>> =
-            Arc::new(Mutex::new(InMemoryRunStore::default()));
+            Arc::new(Mutex::new(FdbRunStore::new(db.clone())));
         let schemas: Arc<Mutex<dyn SchemaStore>> =
             Arc::new(Mutex::new(FdbSchemaStore::new(db.clone())));
+
+        let (trigger_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
+        let batch_writer = Arc::new(BatchWriter::new(
+            Arc::clone(&tuples),
+            Arc::clone(&playbooks),
+            trigger_tx.clone(),
+        ));
+
+        let (run_tx, _) = broadcast::channel::<RunEvent>(BROADCAST_CAPACITY);
+        let (dispatch_tx, _) = broadcast::channel::<AgentDispatchedEvent>(BROADCAST_CAPACITY);
+
+        let executor = Arc::new(Executor::new(
+            Arc::clone(&playbooks),
+            Arc::clone(&agents),
+            Arc::clone(&schemas),
+            Arc::clone(&runs),
+            Arc::clone(&batch_writer),
+            trigger_tx.clone(),
+            run_tx,
+            dispatch_tx,
+        ));
+
+        Ok(Self {
+            schemas,
+            tuples,
+            filters: Arc::new(Mutex::new(filters)),
+            playbooks,
+            agents,
+            runs,
+            trigger_tx,
+            batch_writer,
+            executor,
+        })
+    }
+
+    #[cfg(feature = "postgres")]
+    async fn new_postgres(pool: sqlx::PgPool) -> Result<Self> {
+        use tuples_storage::{
+            PgAgentStore, PgFilterStore, PgPlaybookStore, PgRunStore, PgSchemaStore, PgTupleStore,
+        };
+        tuples_storage::pg_store::run_migrations(&pool).await?;
+        let filters = PgFilterStore::load(pool.clone()).await?;
+        let pg_playbooks = PgPlaybookStore::load(pool.clone()).await?;
+        let tuples: Arc<dyn TupleStore> = Arc::new(PgTupleStore::new(pool.clone()));
+        let playbooks: Arc<Mutex<dyn PlaybookStore>> = Arc::new(Mutex::new(pg_playbooks));
+        let agents: Arc<Mutex<dyn AgentStore>> =
+            Arc::new(Mutex::new(PgAgentStore::new(pool.clone())));
+        let runs: Arc<Mutex<dyn RunStore>> =
+            Arc::new(Mutex::new(PgRunStore::new(pool.clone())));
+        let schemas: Arc<Mutex<dyn SchemaStore>> =
+            Arc::new(Mutex::new(PgSchemaStore::new(pool)));
+
+        let (trigger_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
+        let batch_writer = Arc::new(BatchWriter::new(
+            Arc::clone(&tuples),
+            Arc::clone(&playbooks),
+            trigger_tx.clone(),
+        ));
+
+        let (run_tx, _) = broadcast::channel::<RunEvent>(BROADCAST_CAPACITY);
+        let (dispatch_tx, _) = broadcast::channel::<AgentDispatchedEvent>(BROADCAST_CAPACITY);
+
+        let executor = Arc::new(Executor::new(
+            Arc::clone(&playbooks),
+            Arc::clone(&agents),
+            Arc::clone(&schemas),
+            Arc::clone(&runs),
+            Arc::clone(&batch_writer),
+            trigger_tx.clone(),
+            run_tx,
+            dispatch_tx,
+        ));
+
+        Ok(Self {
+            schemas,
+            tuples,
+            filters: Arc::new(Mutex::new(filters)),
+            playbooks,
+            agents,
+            runs,
+            trigger_tx,
+            batch_writer,
+            executor,
+        })
+    }
+
+    #[cfg(feature = "dynamodb")]
+    async fn new_dynamodb(
+        client: aws_sdk_dynamodb::Client,
+        prefix: String,
+    ) -> Result<Self> {
+        use tuples_storage::{
+            DynamoAgentStore, DynamoFilterStore, DynamoPlaybookStore, DynamoRunStore,
+            DynamoSchemaStore, DynamoTupleStore,
+        };
+        let filters = DynamoFilterStore::load(client.clone(), &prefix).await?;
+        let dynamo_playbooks = DynamoPlaybookStore::load(client.clone(), &prefix).await?;
+        let tuples: Arc<dyn TupleStore> =
+            Arc::new(DynamoTupleStore::new(client.clone(), &prefix));
+        let playbooks: Arc<Mutex<dyn PlaybookStore>> = Arc::new(Mutex::new(dynamo_playbooks));
+        let agents: Arc<Mutex<dyn AgentStore>> =
+            Arc::new(Mutex::new(DynamoAgentStore::new(client.clone(), &prefix)));
+        let runs: Arc<Mutex<dyn RunStore>> =
+            Arc::new(Mutex::new(DynamoRunStore::new(client.clone(), &prefix)));
+        let schemas: Arc<Mutex<dyn SchemaStore>> =
+            Arc::new(Mutex::new(DynamoSchemaStore::new(client, &prefix)));
 
         let (trigger_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         let batch_writer = Arc::new(BatchWriter::new(
@@ -685,24 +812,46 @@ fn run_to_proto(run: tuples_core::run::PlaybookRun) -> RunResponse {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let _args = Args::parse();
+    let args = Args::parse();
     let addr = ADDR.parse()?;
 
     // Network handle must outlive all FDB operations — keep it in scope until main() returns.
     #[cfg(feature = "fdb")]
-    let _fdb_network = if _args.fdb { Some(unsafe { foundationdb::boot() }) } else { None };
-
-    #[cfg(feature = "fdb")]
-    let service = if _args.fdb {
-        println!("tuplesd {VERSION} starting with FoundationDB backend");
-        let db = Arc::new(foundationdb::Database::default()?);
-        TuplesService::new_fdb(db).await?
+    let _fdb_network = if matches!(args.backend, Backend::Fdb) {
+        Some(unsafe { foundationdb::boot() })
     } else {
-        TuplesService::new()
+        None
     };
 
-    #[cfg(not(feature = "fdb"))]
-    let service = TuplesService::new();
+    let service = match args.backend {
+        Backend::Memory => {
+            println!("tuplesd {VERSION} starting with in-memory backend");
+            TuplesService::new()
+        }
+        #[cfg(feature = "fdb")]
+        Backend::Fdb => {
+            println!("tuplesd {VERSION} starting with FoundationDB backend");
+            let db = Arc::new(foundationdb::Database::default()?);
+            TuplesService::new_fdb(db).await?
+        }
+        #[cfg(feature = "postgres")]
+        Backend::Postgres => {
+            let url = args
+                .database_url
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("--database-url is required for postgres backend"))?;
+            println!("tuplesd {VERSION} starting with Postgres backend");
+            let pool = sqlx::PgPool::connect(url).await?;
+            TuplesService::new_postgres(pool).await?
+        }
+        #[cfg(feature = "dynamodb")]
+        Backend::Dynamodb => {
+            println!("tuplesd {VERSION} starting with DynamoDB backend");
+            let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+            let client = aws_sdk_dynamodb::Client::new(&config);
+            TuplesService::new_dynamodb(client, args.dynamo_prefix).await?
+        }
+    };
 
     println!("tuplesd {VERSION} listening on {addr}");
 

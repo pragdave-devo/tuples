@@ -20,6 +20,13 @@ edition = "2021"
 # FoundationDB
 foundationdb = { version = "0.10", features = ["fdb-7_3"] }
 
+# Postgres
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "json", "uuid"] }
+
+# DynamoDB
+aws-sdk-dynamodb = "1"
+aws-config = "1"
+
 # gRPC / protobuf
 tonic = "0.12"
 prost = "0.13"
@@ -29,7 +36,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 
 # CLI
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 
 # Error handling
 anyhow = "1"

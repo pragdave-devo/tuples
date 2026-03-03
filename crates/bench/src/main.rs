@@ -2,10 +2,11 @@
 
 use anyhow::Result;
 use clap::Parser;
+use prost::Message;
 use proto::tuples::{
     agents_client::AgentsClient, health_client::HealthClient, playbooks_client::PlaybooksClient,
     schemas_client::SchemasClient, tuple_store_client::TupleStoreClient, Empty, PutTupleRequest,
-    RegisterAgentRequest, RegisterPlaybookRequest, RegisterSchemaRequest,
+    PutTupleResponse, RegisterAgentRequest, RegisterPlaybookRequest, RegisterSchemaRequest,
 };
 use rand::Rng;
 use std::time::{Duration, Instant};
@@ -160,41 +161,33 @@ async fn setup(
             .await?;
     }
 
-    let matching_count = std::cmp::min(
-        std::cmp::max(1, (args.trigger_count as f64 * 0.2).round() as usize),
-        args.trigger_count,
-    );
-    let miss_count = args.trigger_count - matching_count;
+    // Register agent.
+    agents_client
+        .register_agent(RegisterAgentRequest {
+            name: "perf_agent".to_string(),
+            description: "Perf test agent".to_string(),
+            schema: schema_defs[0].name.clone(),
+        })
+        .await?;
 
-    // Register schemas for non-matching triggers so validation passes.
-    for j in 0..miss_count {
-        let name = format!("perf_{run_id}_miss_{j}");
-        schemas
-            .register_schema(RegisterSchemaRequest {
-                name,
-                definition: schema_def.to_string(),
-            })
-            .await?;
-    }
-
-    let agents = vec!["perf_agent"];
-
-    let mut triggers = Vec::with_capacity(args.trigger_count);
-    for i in 0..matching_count {
-        let type_name = format!("perf_{run_id}_type_{}", i % args.tuple_count);
+    // Build triggers.
+    let mut triggers = Vec::with_capacity(args.triggers);
+    for i in 0..args.triggers {
+        let schema_idx = if i < args.schemas {
+            i
+        } else {
+            rand::thread_rng().gen_range(0..args.schemas)
+        };
+        let type_name = &schema_defs[schema_idx].name;
         triggers.push(serde_json::json!({
             "id": format!("t_{i}"),
-            "match": { "tuple_type": type_name },
-            "execution": {
-                "agent": "perf_agent",
-                "params": {}
-            }
-        }));
-    }
-    for j in 0..(args.trigger_count - matching_count) {
-        triggers.push(serde_json::json!({
-            "id": format!("t_miss_{j}"),
-            "match": { "tuple_type": format!("perf_{run_id}_miss_{j}") },
+            "match": {
+                "tuple_type": type_name,
+                "filter": {
+                    "id": format!("f_{i}"),
+                    "exact": { "status": "fire" }
+                }
+            },
             "execution": {
                 "agent": "perf_agent",
                 "params": {}
@@ -242,9 +235,17 @@ fn generate_pool(
         .collect()
 }
 
+struct ProtoOverhead {
+    total_encode: Duration,
+    total_decode: Duration,
+    count: usize,
+    encoded_bytes: usize,
+}
+
 struct RunStats {
     batch_durations: Vec<Duration>,
     put_latencies: Vec<Duration>,
+    proto: ProtoOverhead,
 }
 
 async fn timed_run(
@@ -258,6 +259,17 @@ async fn timed_run(
 
     let mut batch_durations = Vec::with_capacity(batch_count);
     let mut put_latencies = Vec::with_capacity(args.total_tuples);
+    let mut total_encode = Duration::ZERO;
+    let mut total_decode = Duration::ZERO;
+    let mut encoded_bytes = 0usize;
+    let mut encode_buf = Vec::with_capacity(256);
+
+    // Build a representative response to decode against.
+    let sample_resp = PutTupleResponse {
+        uuid7: "01954e6c-7a00-7000-8000-000000000000".to_string(),
+        created_at: "2026-03-03T12:00:00Z".to_string(),
+    };
+    let resp_bytes = sample_resp.encode_to_vec();
 
     for _ in 0..batch_count {
         let start_idx = rng.gen_range(0..args.batch_size);
@@ -266,24 +278,45 @@ async fn timed_run(
         for j in 0..args.batch_size {
             let idx = (start_idx + j) % pool_size;
             let (type_name, data) = &pool[idx];
+
+            let req = PutTupleRequest {
+                r#type: type_name.clone(),
+                trace_id: "perf".to_string(),
+                data: data.clone(),
+                guaranteed_write: args.guaranteed,
+            };
+
+            // Measure encode.
+            encode_buf.clear();
+            let t_enc = Instant::now();
+            req.encode(&mut encode_buf).unwrap();
+            total_encode += t_enc.elapsed();
+            encoded_bytes += encode_buf.len();
+
+            // Actual RPC.
             let t0 = Instant::now();
-            client
-                .put_tuple(PutTupleRequest {
-                    r#type: type_name.clone(),
-                    trace_id: "perf".to_string(),
-                    data: data.clone(),
-                    guaranteed_write: args.guaranteed,
-                })
-                .await?;
+            client.put_tuple(req).await?;
             put_latencies.push(t0.elapsed());
+
+            // Measure decode.
+            let t_dec = Instant::now();
+            let _ = PutTupleResponse::decode(resp_bytes.as_slice()).unwrap();
+            total_decode += t_dec.elapsed();
         }
 
         batch_durations.push(batch_start.elapsed());
     }
 
+    let count = batch_count * args.batch_size;
     Ok(RunStats {
         batch_durations,
         put_latencies,
+        proto: ProtoOverhead {
+            total_encode,
+            total_decode,
+            count,
+            encoded_bytes,
+        },
     })
 }
 
@@ -339,6 +372,7 @@ fn print_stats(stats: RunStats, total: Duration, args: &Args) {
 
     // Put latency
     let mut put_sorted = stats.put_latencies;
+    let put_total: Duration = put_sorted.iter().sum();
     put_sorted.sort();
     if !put_sorted.is_empty() {
         println!("Put latency (ms):");
@@ -352,6 +386,27 @@ fn print_stats(stats: RunStats, total: Duration, args: &Args) {
             fmt_ms(percentile(&put_sorted, 50.0)),
             fmt_ms(percentile(&put_sorted, 99.0)),
             fmt_ms(*put_sorted.last().unwrap())
+        );
+        println!();
+    }
+
+    // Protobuf overhead
+    let p = stats.proto;
+    if p.count > 0 {
+        let avg_enc_ns = p.total_encode.as_nanos() / p.count as u128;
+        let avg_dec_ns = p.total_decode.as_nanos() / p.count as u128;
+        let avg_bytes = p.encoded_bytes / p.count;
+        let avg_put_ns = put_total.as_nanos() / p.count as u128;
+        let overhead_pct = if avg_put_ns > 0 {
+            (avg_enc_ns + avg_dec_ns) as f64 / avg_put_ns as f64 * 100.0
+        } else {
+            0.0
+        };
+
+        println!("Protobuf overhead (per message):");
+        println!(
+            "         encode: {}ns, decode: {}ns, size: {}B, ~{:.2}% of avg put",
+            avg_enc_ns, avg_dec_ns, avg_bytes, overhead_pct
         );
     }
 }

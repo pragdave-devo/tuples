@@ -51,6 +51,11 @@ docs:
     sabledocs
     rm descriptor.pb sabledocs.toml
 
+# Run the benchmark (release build) — forwards all args to tuples-bench
+[no-exit-message]
+bench-release *args="":
+    cargo run --bin tuples-bench --release -- {{ args }}
+
 # Rebuild docs and trigger a GitHub Pages deployment
 pages: docs
     @echo "Docs regenerated in api-docs/. Push to main to deploy via GitHub Actions."

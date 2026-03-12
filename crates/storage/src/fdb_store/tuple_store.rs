@@ -4,6 +4,7 @@ use foundationdb::Database;
 use std::sync::Arc;
 use tuples_core::tuple::Tuple;
 
+use crate::tuple_store::BatchConfig;
 use crate::TupleStore;
 
 pub struct FdbTupleStore {
@@ -30,6 +31,10 @@ fn by_trace_key(trace_id: &str, uuid7: &str) -> Vec<u8> {
 
 #[async_trait]
 impl TupleStore for FdbTupleStore {
+    fn batch_config(&self) -> BatchConfig {
+        BatchConfig::FDB
+    }
+
     async fn put_batch(&self, tuples: &[Tuple]) -> Result<()> {
         let trx = self.db.create_trx()?;
         for tuple in tuples {
@@ -73,7 +78,15 @@ impl TupleStore for FdbTupleStore {
     }
 
     async fn clear(&self) -> Result<()> {
-        anyhow::bail!("clear not implemented for FDB backend")
+        let trx = self.db.create_trx()?;
+        for prefix_tag in &["tuples", "by_type", "by_trace"] {
+            let prefix = foundationdb::tuple::pack(&(*prefix_tag,));
+            let mut end = prefix.clone();
+            *end.last_mut().unwrap() += 1;
+            trx.clear_range(&prefix, &end);
+        }
+        trx.commit().await.map_err(|e| anyhow!("fdb commit: {e}"))?;
+        Ok(())
     }
 }
 

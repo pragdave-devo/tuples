@@ -52,6 +52,7 @@ impl AgentStore for PgAgentStore {
     }
 
     async fn clear(&mut self) -> Result<()> {
-        anyhow::bail!("clear not implemented for Postgres backend")
+        sqlx::query("DELETE FROM agents").execute(&self.pool).await?;
+        Ok(())
     }
 }

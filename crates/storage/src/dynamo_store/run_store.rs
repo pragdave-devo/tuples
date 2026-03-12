@@ -167,6 +167,7 @@ impl RunStore for DynamoRunStore {
     }
 
     async fn clear(&mut self) -> Result<()> {
-        anyhow::bail!("clear not implemented for DynamoDB backend")
+        super::clear_table(&self.client, &self.runs_table, "trace_id").await?;
+        super::clear_table(&self.client, &self.agent_runs_table, "id").await
     }
 }

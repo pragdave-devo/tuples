@@ -10,7 +10,7 @@ path = "src/main.rs"
 [features]
 fdb = ["tuples-storage/fdb", "dep:foundationdb"]
 postgres = ["tuples-storage/postgres", "dep:sqlx"]
-dynamodb = ["tuples-storage/dynamodb"]
+dynamodb = ["tuples-storage/dynamodb", "dep:aws-config", "dep:aws-sdk-dynamodb"]
 
 [dependencies]
 proto = { workspace = true }
@@ -26,3 +26,5 @@ clap = { workspace = true }
 tokio-stream = { workspace = true }
 foundationdb = { workspace = true, optional = true }
 sqlx = { workspace = true, optional = true }
+aws-config = { workspace = true, optional = true }
+aws-sdk-dynamodb = { workspace = true, optional = true }

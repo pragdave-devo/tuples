@@ -6,7 +6,7 @@ edition.workspace = true
 [features]
 fdb = ["dep:foundationdb"]
 postgres = ["dep:sqlx"]
-dynamodb = ["dep:aws-sdk-dynamodb", "dep:aws-config"]
+dynamodb = ["dep:aws-sdk-dynamodb", "dep:aws-config", "dep:tokio", "dep:futures"]
 
 [dependencies]
 tuples-core = { workspace = true }
@@ -17,6 +17,8 @@ foundationdb = { workspace = true, optional = true }
 sqlx = { workspace = true, optional = true }
 aws-sdk-dynamodb = { workspace = true, optional = true }
 aws-config = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

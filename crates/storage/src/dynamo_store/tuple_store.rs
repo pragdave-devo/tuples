@@ -4,6 +4,7 @@ use aws_sdk_dynamodb::types::{AttributeValue, WriteRequest};
 use aws_sdk_dynamodb::Client;
 use tuples_core::tuple::Tuple;
 
+use crate::tuple_store::BatchConfig;
 use crate::TupleStore;
 
 pub struct DynamoTupleStore {
@@ -33,6 +34,10 @@ impl DynamoTupleStore {
 
 #[async_trait]
 impl TupleStore for DynamoTupleStore {
+    fn batch_config(&self) -> BatchConfig {
+        BatchConfig::DYNAMODB
+    }
+
     async fn put(&self, tuple: Tuple) -> Result<()> {
         let data = serde_json::to_string(&tuple)?;
         self.client
@@ -68,21 +73,24 @@ impl TupleStore for DynamoTupleStore {
     }
 
     async fn put_batch(&self, tuples: &[Tuple]) -> Result<()> {
+        let mut futs = Vec::new();
         for chunk in tuples.chunks(25) {
             let mut requests = Vec::with_capacity(chunk.len());
             for tuple in chunk {
                 requests.push(Self::put_request(tuple)?);
             }
-            self.client
-                .batch_write_item()
-                .request_items(&self.table, requests)
-                .send()
-                .await?;
+            futs.push(
+                self.client
+                    .batch_write_item()
+                    .request_items(&self.table, requests)
+                    .send(),
+            );
         }
+        futures::future::try_join_all(futs).await?;
         Ok(())
     }
 
     async fn clear(&self) -> Result<()> {
-        anyhow::bail!("clear not implemented for DynamoDB backend")
+        super::clear_table(&self.client, &self.table, "uuid7").await
     }
 }

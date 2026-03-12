@@ -61,6 +61,7 @@ impl PlaybookStore for PgPlaybookStore {
     }
 
     async fn clear(&mut self) -> Result<()> {
-        anyhow::bail!("clear not implemented for Postgres backend")
+        sqlx::query("DELETE FROM playbooks").execute(&self.pool).await?;
+        self.cache.clear().await
     }
 }

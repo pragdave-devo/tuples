@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use sqlx::PgPool;
 use tuples_core::tuple::Tuple;
 
+use crate::tuple_store::BatchConfig;
 use crate::TupleStore;
 
 pub struct PgTupleStore {
@@ -17,6 +18,10 @@ impl PgTupleStore {
 
 #[async_trait]
 impl TupleStore for PgTupleStore {
+    fn batch_config(&self) -> BatchConfig {
+        BatchConfig::POSTGRES
+    }
+
     async fn put(&self, tuple: Tuple) -> Result<()> {
         let data = serde_json::to_value(&tuple)?;
         sqlx::query("INSERT INTO tuples (uuid7, tuple_type, trace_id, data) VALUES ($1, $2, $3, $4) ON CONFLICT (uuid7) DO UPDATE SET data = $4")
@@ -59,6 +64,7 @@ impl TupleStore for PgTupleStore {
     }
 
     async fn clear(&self) -> Result<()> {
-        anyhow::bail!("clear not implemented for Postgres backend")
+        sqlx::query("DELETE FROM tuples").execute(&self.pool).await?;
+        Ok(())
     }
 }

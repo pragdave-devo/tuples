@@ -62,6 +62,7 @@ impl FilterStore for PgFilterStore {
     }
 
     async fn clear(&mut self) -> Result<()> {
-        anyhow::bail!("clear not implemented for Postgres backend")
+        sqlx::query("DELETE FROM filters").execute(&self.pool).await?;
+        self.cache.clear().await
     }
 }

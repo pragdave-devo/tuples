@@ -38,6 +38,9 @@ struct Args {
     /// Use guaranteed_write=true for every put
     #[arg(long)]
     guaranteed: bool,
+    /// Max concurrent in-flight put_tuple RPCs per batch (1 = sequential)
+    #[arg(long, default_value_t = 1)]
+    concurrency: usize,
 }
 
 /// (type_name, data_json)
@@ -271,40 +274,96 @@ async fn timed_run(
     };
     let resp_bytes = sample_resp.encode_to_vec();
 
-    for _ in 0..batch_count {
-        let start_idx = rng.gen_range(0..args.batch_size);
-        let batch_start = Instant::now();
+    if args.concurrency <= 1 {
+        // Sequential path (original behavior).
+        for _ in 0..batch_count {
+            let start_idx = rng.gen_range(0..args.batch_size);
+            let batch_start = Instant::now();
 
-        for j in 0..args.batch_size {
-            let idx = (start_idx + j) % pool_size;
-            let (type_name, data) = &pool[idx];
+            for j in 0..args.batch_size {
+                let idx = (start_idx + j) % pool_size;
+                let (type_name, data) = &pool[idx];
 
-            let req = PutTupleRequest {
-                r#type: type_name.clone(),
-                trace_id: "perf".to_string(),
-                data: data.clone(),
-                guaranteed_write: args.guaranteed,
-            };
+                let req = PutTupleRequest {
+                    r#type: type_name.clone(),
+                    trace_id: "perf".to_string(),
+                    data: data.clone(),
+                    guaranteed_write: args.guaranteed,
+                };
 
-            // Measure encode.
-            encode_buf.clear();
-            let t_enc = Instant::now();
-            req.encode(&mut encode_buf).unwrap();
-            total_encode += t_enc.elapsed();
-            encoded_bytes += encode_buf.len();
+                // Measure encode.
+                encode_buf.clear();
+                let t_enc = Instant::now();
+                req.encode(&mut encode_buf).unwrap();
+                total_encode += t_enc.elapsed();
+                encoded_bytes += encode_buf.len();
 
-            // Actual RPC.
-            let t0 = Instant::now();
-            client.put_tuple(req).await?;
-            put_latencies.push(t0.elapsed());
+                // Actual RPC.
+                let t0 = Instant::now();
+                client.put_tuple(req).await?;
+                put_latencies.push(t0.elapsed());
 
-            // Measure decode.
-            let t_dec = Instant::now();
-            let _ = PutTupleResponse::decode(resp_bytes.as_slice()).unwrap();
-            total_decode += t_dec.elapsed();
+                // Measure decode.
+                let t_dec = Instant::now();
+                let _ = PutTupleResponse::decode(resp_bytes.as_slice()).unwrap();
+                total_decode += t_dec.elapsed();
+            }
+
+            batch_durations.push(batch_start.elapsed());
         }
+    } else {
+        // Concurrent path — fire up to `concurrency` in-flight RPCs at once.
+        for _ in 0..batch_count {
+            let start_idx = rng.gen_range(0..args.batch_size);
+            let batch_start = Instant::now();
 
-        batch_durations.push(batch_start.elapsed());
+            let mut join_set = tokio::task::JoinSet::new();
+
+            for j in 0..args.batch_size {
+                // If we've hit the concurrency limit, drain one before spawning.
+                if join_set.len() >= args.concurrency {
+                    if let Some(result) = join_set.join_next().await {
+                        put_latencies.push(result??);
+                    }
+                }
+
+                let idx = (start_idx + j) % pool_size;
+                let (type_name, data) = &pool[idx];
+
+                let req = PutTupleRequest {
+                    r#type: type_name.clone(),
+                    trace_id: "perf".to_string(),
+                    data: data.clone(),
+                    guaranteed_write: args.guaranteed,
+                };
+
+                // Measure encode (on this thread, not in the task).
+                encode_buf.clear();
+                let t_enc = Instant::now();
+                req.encode(&mut encode_buf).unwrap();
+                total_encode += t_enc.elapsed();
+                encoded_bytes += encode_buf.len();
+
+                // Measure decode.
+                let t_dec = Instant::now();
+                let _ = PutTupleResponse::decode(resp_bytes.as_slice()).unwrap();
+                total_decode += t_dec.elapsed();
+
+                let mut c = client.clone();
+                join_set.spawn(async move {
+                    let t0 = Instant::now();
+                    c.put_tuple(req).await?;
+                    Ok::<Duration, tonic::Status>(t0.elapsed())
+                });
+            }
+
+            // Drain remaining in-flight RPCs.
+            while let Some(result) = join_set.join_next().await {
+                put_latencies.push(result??);
+            }
+
+            batch_durations.push(batch_start.elapsed());
+        }
     }
 
     let count = batch_count * args.batch_size;
@@ -339,8 +398,8 @@ fn print_stats(stats: RunStats, total: Duration, args: &Args) {
         args.schemas, args.triggers, args.trigger_pct
     );
     println!(
-        "         batch_size={}, total={} ({} batches), guaranteed={}",
-        args.batch_size, actual_tuples, batch_count, args.guaranteed
+        "         batch_size={}, total={} ({} batches), guaranteed={}, concurrency={}",
+        args.batch_size, actual_tuples, batch_count, args.guaranteed, args.concurrency
     );
     println!();
     println!(
@@ -419,6 +478,7 @@ async fn main() -> Result<()> {
     assert!(args.batch_size > 0, "batch_size must be > 0");
     assert!(args.total_tuples >= args.batch_size, "total_tuples must be >= batch_size");
     assert!(args.trigger_pct <= 100, "trigger_pct must be 0-100");
+    assert!(args.concurrency > 0, "concurrency must be > 0");
 
     let channel = Channel::from_shared(args.server.clone())?.connect().await?;
     let mut health = HealthClient::new(channel.clone());

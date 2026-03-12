@@ -17,7 +17,10 @@
       "mcp__plugin_chrome-devtools-mcp_chrome-devtools__close_page",
       "mcp__plugin_chrome-devtools-mcp_chrome-devtools__new_page",
       "mcp__plugin_chrome-devtools-mcp_chrome-devtools__evaluate_script",
-      "Bash(cargo check:*)"
+      "Bash(cargo check:*)",
+      "Bash(just:*)",
+      "Bash(cargo:*)",
+      "Bash(target/debug/tuples-bench:*)"
     ]
   }
 }

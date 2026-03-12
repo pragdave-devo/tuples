@@ -11,7 +11,7 @@ _dynamo    := "dynamodb"
 # Run tuplesd with the given backend features (empty = in-memory)
 [no-exit-message]
 run features=_mem label="" *args="":
-    cargo run -p server {{ if features != "" { "--features " + features } else { "" } }} -- {{ args }}
+    cargo run -p server {{ if features != "" { "--features " + features } else { "" } }} -- {{ if features != "" { "--backend " + features } else { "" } }} {{ args }}
 
 # Build an optimized release of tuplesd (named tuplesd-<label> when a backend is selected)
 release features=_mem label="":
@@ -55,6 +55,12 @@ docs:
 [no-exit-message]
 bench-release *args="":
     cargo run --bin tuples-bench --release -- {{ args }}
+
+# Profile tuplesd under samply (release build with debug symbols)
+[no-exit-message]
+profile features=_mem label="" *args="":
+    cargo build -p server --release {{ if features != "" { "--features " + features } else { "" } }}
+    samply record target/release/tuplesd {{ if features != "" { "--backend " + features } else { "" } }} {{ args }}
 
 # Rebuild docs and trigger a GitHub Pages deployment
 pages: docs

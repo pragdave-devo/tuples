@@ -81,7 +81,11 @@ impl FilterStore for FdbFilterStore {
     }
 
     async fn clear(&mut self) -> Result<()> {
-        anyhow::bail!("clear not implemented for FDB backend")
+        let (begin, end) = filters_prefix();
+        let trx = self.db.create_trx()?;
+        trx.clear_range(&begin, &end);
+        trx.commit().await.map_err(|e| anyhow!("fdb commit: {e}"))?;
+        self.cache.clear().await
     }
 }
 

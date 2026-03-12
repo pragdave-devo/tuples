@@ -3628,6 +3628,8 @@ name = "server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aws-config",
+ "aws-sdk-dynamodb",
  "chrono",
  "clap",
  "foundationdb",
@@ -4527,6 +4529,7 @@ dependencies = [
  "aws-sdk-dynamodb",
  "chrono",
  "foundationdb",
+ "futures",
  "serde_json",
  "sqlx",
  "tokio",

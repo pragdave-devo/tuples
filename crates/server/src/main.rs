@@ -77,6 +77,11 @@ struct Args {
     #[cfg(feature = "dynamodb")]
     #[arg(long, default_value = "tuples_")]
     dynamo_prefix: String,
+
+    /// AWS profile to use for DynamoDB (overrides AWS_PROFILE)
+    #[cfg(feature = "dynamodb")]
+    #[arg(long, env = "TUPLES_AWS_PROFILE")]
+    aws_profile: Option<String>,
 }
 
 struct TuplesService {
@@ -860,8 +865,13 @@ async fn main() -> Result<()> {
         #[cfg(feature = "dynamodb")]
         Backend::Dynamodb => {
             println!("tuplesd {VERSION} starting with DynamoDB backend");
-            let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+            let mut aws_builder = aws_config::defaults(aws_config::BehaviorVersion::latest());
+            if let Some(profile) = &args.aws_profile {
+                aws_builder = aws_builder.profile_name(profile);
+            }
+            let config = aws_builder.load().await;
             let client = aws_sdk_dynamodb::Client::new(&config);
+            tuples_storage::ensure_dynamo_tables(&client, &args.dynamo_prefix).await?;
             TuplesService::new_dynamodb(client, args.dynamo_prefix).await?
         }
     };

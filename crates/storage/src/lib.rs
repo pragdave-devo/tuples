@@ -12,7 +12,7 @@ pub use filter_store::{FilterStore, InMemoryFilterStore};
 pub use playbook_store::{InMemoryPlaybookStore, PlaybookStore};
 pub use run_store::{InMemoryRunStore, RunStore};
 pub use schema_store::{InMemorySchemaStore, SchemaStore};
-pub use tuple_store::{InMemoryTupleStore, TupleStore};
+pub use tuple_store::{BatchConfig, InMemoryTupleStore, TupleStore};
 
 #[cfg(feature = "fdb")]
 pub mod fdb_store;
@@ -32,6 +32,6 @@ pub use pg_store::{
 pub mod dynamo_store;
 #[cfg(feature = "dynamodb")]
 pub use dynamo_store::{
-    DynamoAgentStore, DynamoFilterStore, DynamoPlaybookStore, DynamoRunStore, DynamoSchemaStore,
-    DynamoTupleStore,
+    ensure_tables as ensure_dynamo_tables, DynamoAgentStore, DynamoFilterStore,
+    DynamoPlaybookStore, DynamoRunStore, DynamoSchemaStore, DynamoTupleStore,
 };

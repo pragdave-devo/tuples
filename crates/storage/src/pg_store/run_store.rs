@@ -126,6 +126,8 @@ impl RunStore for PgRunStore {
     }
 
     async fn clear(&mut self) -> Result<()> {
-        anyhow::bail!("clear not implemented for Postgres backend")
+        sqlx::query("DELETE FROM agent_runs").execute(&self.pool).await?;
+        sqlx::query("DELETE FROM runs").execute(&self.pool).await?;
+        Ok(())
     }
 }

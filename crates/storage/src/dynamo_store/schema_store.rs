@@ -69,6 +69,6 @@ impl SchemaStore for DynamoSchemaStore {
     }
 
     async fn clear(&mut self) -> Result<()> {
-        anyhow::bail!("clear not implemented for DynamoDB backend")
+        super::clear_table(&self.client, &self.table, "name").await
     }
 }

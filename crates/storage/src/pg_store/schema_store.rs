@@ -52,6 +52,7 @@ impl SchemaStore for PgSchemaStore {
     }
 
     async fn clear(&mut self) -> Result<()> {
-        anyhow::bail!("clear not implemented for Postgres backend")
+        sqlx::query("DELETE FROM schemas").execute(&self.pool).await?;
+        Ok(())
     }
 }

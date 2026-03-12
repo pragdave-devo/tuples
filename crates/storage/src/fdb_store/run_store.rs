@@ -184,7 +184,15 @@ impl RunStore for FdbRunStore {
     }
 
     async fn clear(&mut self) -> Result<()> {
-        anyhow::bail!("clear not implemented for FDB backend")
+        let trx = self.db.create_trx()?;
+        for prefix_tag in &["runs", "agent_runs", "agent_runs_by_trace"] {
+            let prefix = foundationdb::tuple::pack(&(*prefix_tag,));
+            let mut end = prefix.clone();
+            *end.last_mut().unwrap() += 1;
+            trx.clear_range(&prefix, &end);
+        }
+        trx.commit().await.map_err(|e| anyhow!("fdb commit: {e}"))?;
+        Ok(())
     }
 }
 
